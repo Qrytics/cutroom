@@ -1,0 +1,195 @@
+// Cutroom MCP server: the tools Claude uses to build videos in the shared editor.
+// Every edit goes through the server's ops API, so it appears live in every open editor and stays editable.
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+
+const ROOT = path.resolve(import.meta.dirname, '../../..');
+const BASE = process.env.CUTROOM_URL || 'http://127.0.0.1:4317';
+const PACE = Number(process.env.CUTROOM_PACE ?? 250);
+
+type Json = Record<string, unknown>;
+
+async function call<T = Json>(p: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
+  await ensureServer();
+  const { json, ...rest } = init;
+  const r = await fetch(BASE + p, { ...rest, headers: json !== undefined ? { 'content-type': 'application/json' } : undefined, body: json !== undefined ? JSON.stringify(json) : rest.body });
+  const ct = r.headers.get('content-type') || '';
+  const body = ct.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer());
+  if (!r.ok) throw new Error((body as { error?: string }).error || `HTTP ${r.status}`);
+  return body as T;
+}
+
+let ready: Promise<void> | null = null;
+/** Start the editor server in the background if it is not running yet. */
+function ensureServer() {
+  return (ready ??= (async () => {
+    const up = async () => { try { return (await fetch(`${BASE}/api/health`)).ok; } catch { return false; } };
+    if (await up()) return;
+    fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true });
+    const log = fs.openSync(path.join(ROOT, 'data', 'server.log'), 'a');
+    const tsx = path.join(ROOT, 'node_modules', '.bin', 'tsx');
+    const child = spawn(tsx, ['apps/server/src/index.ts'], { cwd: ROOT, detached: true, stdio: ['ignore', log, log], env: process.env });
+    child.unref();
+    for (let i = 0; i < 120; i++) { if (await up()) return; await new Promise((r) => setTimeout(r, 250)); }
+    ready = null;
+    throw new Error(`Cutroom server did not start — see ${path.join(ROOT, 'data', 'server.log')}`);
+  })());
+}
+
+const text = (v: unknown) => ({ content: [{ type: 'text' as const, text: typeof v === 'string' ? v : JSON.stringify(v, null, 1) }] });
+const editorUrl = (id: string) => `${BASE.replace('127.0.0.1', 'localhost')}/p/${id}`;
+
+function openBrowser(url: string) {
+  const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+  spawn(cmd, [url], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref();
+}
+
+const server = new McpServer({ name: 'cutroom', version: '0.1.0' }, {
+  instructions: 'Cutroom is a collaborative video editor. Build videos by applying edit ops to a project while the user watches live. ' +
+    'Always: begin_editing → (import_media, edit, screenshot to check) → finish_editing. Read the video-editor skill for the full workflow.',
+});
+
+server.registerTool('list_projects', { description: 'List Cutroom projects (newest first).', inputSchema: {} },
+  async () => text(await call('/api/projects')));
+
+server.registerTool('create_project', {
+  description: 'Create a new video project. Use 1920x1080 for landscape, 1080x1920 for Reels/TikTok/Shorts, 1080x1080 square.',
+  inputSchema: { name: z.string(), width: z.number().int().default(1920), height: z.number().int().default(1080), fps: z.number().int().default(30), background: z.string().default('#000000') },
+}, async (a) => {
+  const p = await call<{ id: string }>('/api/projects', { method: 'POST', json: a });
+  return text({ id: p.id, url: editorUrl(p.id) });
+});
+
+server.registerTool('get_project', {
+  description: 'Readable outline of a project: settings, media library, every track and clip with props/keyframes, markers, recent edits. Use it to re-orient before changing an existing video.',
+  inputSchema: { project: z.string() },
+}, async ({ project }) => text(await call(`/api/projects/${project}/summary`)));
+
+server.registerTool('catalog', {
+  description: 'Everything you can place: motion-graphics components (with every prop and default), synthesized sound presets, shared transform/effect/transition/audio props, text animations, easings. Call once per session before building.',
+  inputSchema: {},
+}, async () => text(await call('/api/catalog')));
+
+server.registerTool('design_direction', {
+  description: 'Roll a fresh art direction (look) for a new video: palette, font pairing, shading, texture, background, text/transition/camera motion, ' +
+    'music style+mood and an sfx kit, plus ready-made props ("recipes") for background/title/headline/body/lowerThird/captions/logo/code/wipe/texture/particles/music. ' +
+    'Looks used by the 6 most recent projects are avoided automatically, so every video gets its own identity. Call once per new video, then ' +
+    'record it with {op:"setMeta", look:<key>}. Pass `vibe` (free text from the brief, e.g. "playful consumer app launch") to bias the pick, `look` to force one, or `seed` to reproduce.',
+  inputSchema: { vibe: z.string().optional(), look: z.string().optional(), avoid: z.array(z.string()).optional(), seed: z.number().int().optional() },
+}, async ({ vibe, look, avoid, seed }) => {
+  const q = new URLSearchParams();
+  if (vibe) q.set('vibe', vibe);
+  if (look) q.set('look', look);
+  if (avoid?.length) q.set('avoid', avoid.join(','));
+  if (seed !== undefined) q.set('seed', String(seed));
+  return text(await call(`/api/looks/roll?${q}`));
+});
+
+server.registerTool('begin_editing', {
+  description: 'Take the edit lock so collaborators watch (view-only) while you work, snapshot the current version, and open the editor in the user\'s browser. Call before any edits.',
+  inputSchema: { project: z.string(), task: z.string().describe('One line shown to viewers, e.g. "Cutting a 45s launch teaser"'), open: z.boolean().default(true) },
+}, async ({ project, task, open }) => {
+  await call(`/api/projects/${project}/lock`, { method: 'POST', json: { holder: 'claude', holderName: 'Claude', task } });
+  const url = editorUrl(project);
+  if (open) openBrowser(url);
+  return text({ locked: true, url, note: open ? 'Opened the editor in the browser.' : 'Share this URL with the user.' });
+});
+
+server.registerTool('finish_editing', {
+  description: 'Release the lock so humans can edit everything you made. Include a short summary of what you built.',
+  inputSchema: { project: z.string(), summary: z.string() },
+}, async ({ project, summary }) => {
+  await call(`/api/projects/${project}/lock?holder=claude`, { method: 'DELETE', json: { summary } });
+  return text({ released: true, url: editorUrl(project) });
+});
+
+server.registerTool('import_media', {
+  description: 'Import files from disk (video, audio, images, GIF, SVG) into the project media library. Returns media ids, durations, sizes. Non-web codecs are converted automatically.',
+  inputSchema: { project: z.string(), paths: z.array(z.string()).min(1) },
+}, async ({ project, paths }) => {
+  const out = [];
+  for (const p of paths) {
+    try { out.push(await call(`/api/projects/${project}/media`, { method: 'POST', json: { path: path.resolve(p.replace(/^~(?=\/)/, process.env.HOME || '~')) } })); }
+    catch (e) { out.push({ path: p, error: (e as Error).message }); }
+  }
+  return text(out.map((m) => ('error' in m ? m : { id: m.id, name: m.name, kind: m.kind, duration: m.duration, width: m.width, height: m.height, hasAudio: m.hasAudio })));
+});
+
+server.registerTool('analyze_media', {
+  description: 'Analyze imported media: silences (for cutting dead air in talking-head footage), loudness, a rough beat grid (cut on the beat), and scene-cut times for video.',
+  inputSchema: { project: z.string(), mediaId: z.string(), sceneThreshold: z.number().default(0.3) },
+}, async ({ project, mediaId, sceneThreshold }) => text(await call(`/api/projects/${project}/media/${mediaId}/analyze?threshold=${sceneThreshold}`)));
+
+const OPS_DOC = `Array of edit ops, applied in order, atomically validated. Times are seconds. Give clips your own short ids (e.g. "title1") so later ops can refer to them.
+{op:"setMeta", name?, width?, height?, fps?, background?, duration?, look?}
+{op:"addTrack", id?, kind:"visual"|"audio", name?, order?}   (higher order draws on top)
+{op:"updateTrack", id, name?, order?, muted?, hidden?, locked?}  {op:"removeTrack", id}
+{op:"addClip", id?, type:"video"|"image"|"audio"|"component"|"sfx", start, duration?, trackId?, mediaId? (video/image/audio), component? (component key, or sfx preset key), inPoint?, speed?, name?, props?, keyframes?}
+   - trackId optional: omitted → first free track of the right kind; an unknown id creates that track.
+   - duration defaults: media length, component/sfx default.
+{op:"updateClip", id, start?, duration?, inPoint?, speed?, trackId?, name?}
+{op:"setProps", id, props:{...}}  (null removes a prop → back to default)
+{op:"setKeyframes", id, prop, keyframes:[{t (clip-local s), v, ease?}]}   {op:"addKeyframe", id, prop, t, v, ease?}   {op:"removeKeyframe", id, prop, t}
+{op:"splitClip", id, t (timeline s), newId?}  {op:"duplicateClip", id, newId?, start?, trackId?}  {op:"removeClip", id}  {op:"rippleDelete", id}
+{op:"addMarker", id?, t, label, color?}  {op:"removeMarker", id}  {op:"clear"}
+Props: see catalog. Transform x/y are the clip's center in canvas px (default = canvas center). Animate any numeric/color prop with keyframes.`;
+
+server.registerTool('edit', {
+  description: `Apply edit ops to the timeline. Viewers see each op land live (paced). ${OPS_DOC}`,
+  inputSchema: {
+    project: z.string(),
+    ops: z.array(z.object({ op: z.string() }).passthrough()).min(1),
+    pace: z.number().optional().describe(`ms between ops so the user can watch (default ${PACE}; 0 = instant)`),
+  },
+}, async ({ project, ops, pace }) => {
+  const r = await call<{ results: { op: string; id?: string; summary: string }[] }>(`/api/projects/${project}/ops`, { method: 'POST', json: { ops, pace: pace ?? PACE } });
+  return text(r.results.map((x) => (x.id ? `${x.id}: ${x.summary}` : x.summary)).join('\n'));
+});
+
+server.registerTool('screenshot', {
+  description: 'Render frames exactly as the export will look, so you can check your work (text fits, nothing overlaps, safe areas, timing). Pass several times to check animation states.',
+  inputSchema: { project: z.string(), times: z.array(z.number()).min(1).max(8), scale: z.number().min(0.1).max(1).default(0.5) },
+}, async ({ project, times, scale }) => {
+  const content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[] = [];
+  for (const t of times) {
+    const buf = await call<Buffer>(`/api/projects/${project}/frame?t=${t}&scale=${scale}`);
+    content.push({ type: 'text', text: `t=${t}s` }, { type: 'image', data: Buffer.from(buf).toString('base64'), mimeType: 'image/jpeg' });
+  }
+  return { content };
+});
+
+server.registerTool('contact_sheet', {
+  description: 'One image with a grid of frames across the whole video (default 12 evenly spaced) — fast overall review of pacing and look.',
+  inputSchema: { project: z.string(), times: z.array(z.number()).optional(), cols: z.number().int().default(4) },
+}, async ({ project, times, cols }) => {
+  const q = times?.length ? `times=${times.join(',')}&` : '';
+  const buf = await call<Buffer>(`/api/projects/${project}/sheet?${q}cols=${cols}`);
+  return { content: [{ type: 'image' as const, data: Buffer.from(buf).toString('base64'), mimeType: 'image/jpeg' }] };
+});
+
+server.registerTool('export_video', {
+  description: 'Render the final video file. Presets: mp4 (default, H.264), draft (half-size, fast), webm, prores, gif. Waits for completion and returns the file path.',
+  inputSchema: { project: z.string(), preset: z.string().default('mp4'), from: z.number().optional(), to: z.number().optional() },
+}, async ({ project, preset, from, to }) => {
+  let job = await call<{ id: string; status: string; file?: string; error?: string; message: string }>(`/api/projects/${project}/export`, { method: 'POST', json: { preset, range: from !== undefined || to !== undefined ? { from, to } : undefined } });
+  while (job.status !== 'done' && job.status !== 'error') {
+    await new Promise((r) => setTimeout(r, 1500));
+    job = await call(`/api/jobs/${job.id}`);
+  }
+  if (job.status === 'error') throw new Error(job.error);
+  return text({ file: job.file, message: job.message });
+});
+
+server.registerTool('versions', {
+  description: 'List saved versions (one is saved automatically each time you begin editing), or restore one by id.',
+  inputSchema: { project: z.string(), restore: z.string().optional() },
+}, async ({ project, restore }) => {
+  if (restore) return text(await call(`/api/projects/${project}/snapshots/${restore}/restore`, { method: 'POST', json: { author: { id: 'claude', name: 'Claude' } } }));
+  return text(await call(`/api/projects/${project}/snapshots`));
+});
+
+await server.connect(new StdioServerTransport());
