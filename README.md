@@ -30,7 +30,7 @@ Requirements: **Node 20+** (developed on Node 24), macOS/Linux/Windows. ffmpeg/f
 headless renderer uses Playwright's Chromium.
 
 ```bash
-git clone <this repo> ~/gitProjects/cutroom
+git clone https://github.com/Qrytics/cutroom.git ~/gitProjects/cutroom
 cd ~/gitProjects/cutroom
 npm install
 npx playwright install chromium   # headless renderer for screenshots and export
