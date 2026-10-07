@@ -69,7 +69,12 @@ input[type='range'] { accent-color: var(--accent); padding: 0; border: 0; backgr
 .pc-name { font-weight: 600; }
 
 /* ---------------------------------------------------------------- editor layout */
-.editor { display: grid; grid-template-rows: auto auto 1fr minmax(200px, 36%); height: 100%; }
+.editor { display: grid; grid-template-rows: auto auto 1fr minmax(200px, 36%); grid-template-columns: minmax(0, 1fr); height: 100%; }
+/* pinned rows: the lock banner renders nothing when nobody holds the lock, which must not shift the rest up */
+.editor > .topbar { grid-row: 1; }
+.editor > .lock-banner { grid-row: 2; }
+.editor > .workspace { grid-row: 3; }
+.editor > .timeline { grid-row: 4; min-width: 0; }
 .topbar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .title-input { background: transparent; border-color: transparent; font-weight: 600; font-size: 14px; width: 260px; }
 .title-input:hover { border-color: var(--line); }
@@ -79,7 +84,7 @@ input[type='range'] { accent-color: var(--accent); padding: 0; border: 0; backgr
 .avatars { display: flex; gap: 0; margin-right: 6px; }
 .avatar { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; font-weight: 700; font-size: 12px; color: #111; border: 2px solid var(--panel); margin-left: -6px; }
 .avatar.claude { background: var(--claude); color: #fff; animation: pulse 1.4s infinite; }
-.workspace { display: grid; grid-template-columns: 270px 1fr 330px; min-height: 0; }
+.workspace { display: grid; grid-template-columns: 270px minmax(0, 1fr) 330px; min-height: 0; min-width: 0; }
 .right-col { display: grid; grid-template-rows: 1fr minmax(160px, 38%); min-height: 0; border-left: 1px solid var(--line); }
 .panel { background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
 .panel-title { padding: 8px 12px; font-weight: 600; border-bottom: 1px solid var(--line); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }

@@ -82,6 +82,27 @@ try {
         });
       }
       await step('finish_editing (unlock)', () => callTool('finish_editing', { project, summary: 'doctor check' }));
+      await step('editor UI loads and fits the window (1280×720, unlocked)', async () => {
+        const { chromium } = await import('playwright');
+        const b = await chromium.launch();
+        try {
+          const page = await b.newPage({ viewport: { width: 1280, height: 720 } });
+          const errors = [];
+          page.on('pageerror', (e) => errors.push(e.message));
+          await page.goto(`http://localhost:${process.env.PORT || 4317}/p/${project}?name=Doctor`);
+          await page.waitForSelector('.timeline .clip', { timeout: 20000 });
+          const r = await page.evaluate(() => {
+            const box = (s) => document.querySelector(s)?.getBoundingClientRect();
+            const cv = box('.preview canvas') ?? box('canvas'), tl = box('.timeline');
+            return { cv: cv && [cv.x, cv.width], tl: tl?.height, sw: document.documentElement.scrollWidth, clips: document.querySelectorAll('.timeline .clip').length };
+          });
+          if (errors.length) throw new Error(`page error: ${errors[0]}`);
+          if (!r.cv || r.cv[0] < 0 || r.cv[0] + r.cv[1] > 1280 || r.cv[1] < 200) throw new Error(`preview is off-screen or tiny (${JSON.stringify(r.cv)})`);
+          if (!(r.tl > 150)) throw new Error(`timeline is collapsed (${r.tl}px tall)`);
+          if (r.sw > 1290) throw new Error(`page is ${r.sw}px wide in a 1280px window`);
+          if (r.clips < 5) throw new Error(`only ${r.clips} clips on the timeline`);
+        } finally { await b.close(); }
+      });
     }
   }
 } finally {
