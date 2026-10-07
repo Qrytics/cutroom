@@ -5,6 +5,10 @@ import { clipActive, sourceTime, type Clip, type Media, type Project, type Sourc
 export class MediaPool implements SourceProvider {
   private videos = new Map<string, HTMLVideoElement>();
   private images = new Map<string, HTMLImageElement>();
+  /** last good frame per video clip — shown while that video seeks/buffers, so playback never flashes to what's below */
+  private held = new Map<string, { canvas: HTMLCanvasElement; at: number }>();
+  /** frames where an active video had no picture at all (diagnostics) */
+  stats = { frames: 0, held: 0, blank: 0 };
   onFrame: () => void = () => {};
 
   private video(clip: Clip, media: Media) {
@@ -37,7 +41,25 @@ export class MediaPool implements SourceProvider {
   visual(clip: Clip, media: Media): CanvasImageSource | null {
     if (clip.type === 'image') { const i = this.image(media); return i.complete && i.naturalWidth ? i : null; }
     const v = this.videos.get(clip.id);
-    return v && v.readyState >= 2 ? v : null;
+    this.stats.frames++;
+    if (v && v.readyState >= 2 && !v.seeking) { this.hold(clip.id, v); return v; }
+    const h = this.held.get(clip.id);
+    if (h) { this.stats.held++; return h.canvas; }
+    if (v && v.readyState >= 2) return v;
+    this.stats.blank++;
+    return null;
+  }
+
+  /** Keep a copy of the current frame (at most ~8×/s — only needed as a stand-in during seeks). */
+  private hold(id: string, v: HTMLVideoElement) {
+    let h = this.held.get(id);
+    const now = performance.now();
+    if (h && now - h.at < 120) return;
+    if (!v.videoWidth) return;
+    if (!h) { h = { canvas: document.createElement('canvas'), at: 0 }; this.held.set(id, h); }
+    if (h.canvas.width !== v.videoWidth || h.canvas.height !== v.videoHeight) { h.canvas.width = v.videoWidth; h.canvas.height = v.videoHeight; }
+    h.canvas.getContext('2d')!.drawImage(v, 0, 0);
+    h.at = now;
   }
 
   /** Bring every video element in line with timeline time t. */
@@ -54,16 +76,23 @@ export class MediaPool implements SourceProvider {
       const v = this.video(c, m);
       const target = Math.min(Math.max(0, sourceTime(c, Math.max(t, c.start))), Math.max(0, m.duration - 0.05));
       if (playing && clipActive(c, t)) {
-        v.playbackRate = c.speed || 1;
-        if (v.paused) { v.currentTime = target; v.play().catch(() => {}); }
-        else if (Math.abs(v.currentTime - target) > 0.2) v.currentTime = target;
+        const rate = c.speed || 1;
+        // pre-rolled clips are already parked at their first frame — starting them must not seek again
+        if (v.paused) { v.playbackRate = rate; if (Math.abs(v.currentTime - target) > 0.12) v.currentTime = target; v.play().catch(() => {}); }
+        else {
+          // nudge small drift with the playback rate; only a big gap is worth a seek (seeks stall the picture)
+          const drift = v.currentTime - target;
+          if (Math.abs(drift) > 0.75 && !v.seeking) v.currentTime = target;
+          else v.playbackRate = Math.abs(drift) > 0.06 ? rate * (drift > 0 ? 0.92 : 1.08) : rate;
+        }
       } else {
         if (!v.paused) v.pause();
         if (Math.abs(v.currentTime - target) > 0.01 && !v.seeking) v.currentTime = target;
+        else if (v.readyState >= 2 && !v.seeking) this.hold(c.id, v); // a stand-in frame ready before the clip starts
       }
     }
     for (const [id, v] of this.videos) if (!live.has(id) && !v.paused) v.pause();
-    for (const [id, v] of this.videos) if (!p.clips[id]) { v.removeAttribute('src'); v.load(); this.videos.delete(id); }
+    for (const [id, v] of this.videos) if (!p.clips[id]) { v.removeAttribute('src'); v.load(); this.videos.delete(id); this.held.delete(id); }
   }
 
   /** Seek exactly and wait until every visible frame is decoded (export / screenshots). */

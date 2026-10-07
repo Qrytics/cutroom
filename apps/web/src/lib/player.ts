@@ -90,3 +90,5 @@ class Player {
 }
 
 export const player = new Player();
+// handy from the browser console / automated checks: __cutroomPlayer.pool.stats
+(window as unknown as { __cutroomPlayer?: Player }).__cutroomPlayer = player;

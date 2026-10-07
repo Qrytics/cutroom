@@ -91,6 +91,10 @@ with props, keyframes and effects. While you hold the lock, humans are view-only
   so `x` moves the whole block; `align:"left"` only aligns lines within it. Don't estimate text widths — fonts render
   wider than you think (Syne/Anton/Archivo caps ≈ 0.8–1.0 × size per char). Place it, run `check`, adjust to the
   reported bbox.
+- **Stickers/stamps**: `badge` and `stamp` tilt with their own `tilt` prop. Components that own a prop with a shared
+  name (text `shadow` glow, particles/orb `opacity`, scribble `x`/`y`) apply it once — the clip level leaves it alone.
+- **Video clips in a vertical frame**: `fit:"contain"` + `scale` 0.92–0.96 + `cornerRadius` 20–30 + `muted: true`
+  (the music carries the sound); hard-cut between 1.5–2 s segments of the same source (one clip per segment, alternating tracks).
 - **Images/SVGs**: use `fit:"none"` for assets so they draw at their own pixel size (then `scale`). The default
   `fit:"contain"` scales every image to fill the canvas. Rotation/scale pivot on the clip center.
 - **Tracks**: one visual clip at a time per track — overlapping clips on one visual track hide each other; put them
@@ -104,7 +108,8 @@ with props, keyframes and effects. While you hold the lock, humans are view-only
 - **Readability**: ≤ 3–4 words per second on screen; titles 90–160 px, body 40–60 px, code 30–36 px (landscape);
   ≥ 4% margins. Text over busy/bright imagery needs a scrim (`shape` rect, dark fill ~0.6 alpha, `blur` 60–80)
   or a stroke/shadow/box.
-- **Reels (1080×1920)**: keep text and faces out of the bottom ~22% and right ~14% (app UI); captions `yOffset` 250–450.
+- **Reels (1080×1920)**: keep text and faces out of the bottom ~22%, and out of the right ~14% in the lower half
+  (the like/comment column); captions `yOffset` 250–450. See §5b for loops and composition.
 - `overlay` letterbox: `intensity` 0.5 = true 2.39:1 bars (1 doubles them).
 
 ### Recipe sketch
@@ -165,6 +170,26 @@ with props, keyframes and effects. While you hold the lock, humans are view-only
   scale. End a riser exactly on its hit. Match the sound to the motion: a whoosh only for real movement — use
   impacts, foley, UI and tonal sounds for everything else.
 - The mixer limits and soft-clips at −1 dBFS; still keep impacts at volume 0.7–0.9 and music at 0.55–0.75.
+
+## 5b. Reels / Shorts / TikTok — what works
+- **Make it loop seamlessly** (these platforms replay forever): the last frame must equal the first. End with a
+  `revealMask` (`inverse: true`, circle, the accent color) that fully closes by the final frame, and start with the
+  same `revealMask` (same color + origin, not inverse, `delay: 0`) opening over ~0.5 s. Pair the sound: a
+  `suctionIn` stopping dead on the last frame, `popOut` at 0. Keep the music bed's `fadeOut` short (≤ 0.5 s, no `outro`).
+- **Composition**: anchor the main blocks on the vertical centre line — headlines, terminals/code windows, browser
+  or phone frames, numbers, logo, URL — and verify with `check`'s bboxes (left margin ≈ right margin). Then break
+  symmetry *on purpose* with accents: a tilted sticker/badge (`tilt`) overlapping a frame corner, an arrow, a
+  scribble. "Everything centred" and "everything slightly off" both look unintentional.
+- **Plain words on screen**: say what the viewer gets, not internal names. "23 visual styles", not "23 art
+  directions"; "quality check passed", not "check: 0 errors"; "animated graphics", not "components".
+- **Proof beats claims**: real screen recordings of the product + a real result clip + verified numbers.
+- **Length**: 25–35 s; hook in the first 1–2 s; a new device every 3–6 s; end card ≥ 3 s with the URL.
+- **Recording the product** (Playwright `recordVideo`): sign in via `localStorage` (`cutroom.me`) before the page
+  loads, inject a visible cursor (Playwright doesn't draw one), and mock anything private (`page.route`) — never
+  record invite links, tokens, IPs or emails. Find the cut points by measuring per-second frame change on the
+  recording (ffmpeg → raw gray → diff), then compress slow parts with the clip's `speed` (1.3–1.6).
+- **Clicking in recordings**: click an object where nothing else overlaps it (the ship's hull, not under a big
+  title) and verify afterwards that the right clip changed (`get_project`).
 
 ## 6. Check — after every scene and before export
 - `check({project})` renders sample frames through the real compositor and returns text: `✖` errors (text cut off

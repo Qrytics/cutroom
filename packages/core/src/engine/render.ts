@@ -65,12 +65,36 @@ export function layerMatrix(p: Props, W: number, H: number, tr: Pick<TransitionS
 }
 
 /** Transition + camera-motion state of a layer at its local time (what drawFrame applies on top of its props). */
+// A component that defines its own prop with a shared name (text's `shadow` glow, particles' `opacity`, scribble's `x`/`y`)
+// owns that value: the clip-level transform/effect must not apply it a second time.
+const SHARED_DEFAULT: Record<string, (W: number, H: number) => unknown> = {
+  x: (W) => W / 2, y: (_W, H) => H / 2, scale: () => 1, scaleX: () => 1, scaleY: () => 1, rotation: () => 0, opacity: () => 1, anchorX: () => 0.5, anchorY: () => 0.5,
+  blur: () => 0, brightness: () => 1, contrast: () => 1, saturate: () => 1, hue: () => 0, grayscale: () => 0, sepia: () => 0, invert: () => 0, shadow: () => 0, vignette: () => 0, cornerRadius: () => 0,
+};
+const owned = new Map<string, string[]>();
+function ownedKeys(L: Layer) {
+  if (L.clip.type !== 'component') return [];
+  const key = L.clip.component ?? '';
+  let o = owned.get(key);
+  if (!o) { o = (COMPONENTS[key]?.props ?? []).map((d) => d.key).filter((k) => k in SHARED_DEFAULT); owned.set(key, o); }
+  return o;
+}
+/** The props the compositor applies at clip level (transform, opacity, filters) — component-owned names neutralised. */
+export function layerProps(L: Layer, W: number, H: number): Props {
+  const o = ownedKeys(L);
+  if (!o.length) return L.props;
+  const p = { ...L.props };
+  for (const k of o) p[k] = SHARED_DEFAULT[k](W, H);
+  return p;
+}
+
 export function drawnState(L: Layer, W: number, H: number) {
   const seed = componentSeed(L.clip.id);
-  const tr = transitionState(L.props, L.localT, L.clip.duration, seed);
-  const mo = motionState(L.props, L.localT, seed, W);
+  const lp = layerProps(L, W, H);
+  const tr = transitionState(lp, L.localT, L.clip.duration, seed);
+  const mo = motionState(lp, L.localT, seed, W);
   if (mo.dx || mo.dy || mo.rot || mo.scale !== 1) { tr.dx += mo.dx / W; tr.dy += mo.dy / H; tr.rotate += mo.rot; tr.scale *= mo.scale; }
-  const em = emphasisState(L.props, L.localT, W);
+  const em = emphasisState(lp, L.localT, W);
   if (em.dx || em.dy || em.rot || em.scale !== 1 || em.sx !== 1 || em.sy !== 1 || em.alpha !== 1) {
     tr.dx += em.dx / W; tr.dy += em.dy / H; tr.rotate += em.rot; tr.scale *= em.scale;
     tr.sx *= em.sx || 0.001; tr.sy *= em.sy || 0.001; tr.alpha *= em.alpha;
@@ -80,7 +104,7 @@ export function drawnState(L: Layer, W: number, H: number) {
 
 /** The local → canvas matrix exactly as drawn this frame (editor handles and hit-testing use it). */
 export function drawnMatrix(L: Layer, W: number, H: number) {
-  return layerMatrix(L.props, W, H, drawnState(L, W, H).tr);
+  return layerMatrix(layerProps(L, W, H), W, H, drawnState(L, W, H).tr);
 }
 
 /** Content bounds in layer-local coordinates (before transform). */
@@ -160,7 +184,9 @@ export function drawFrame(ctx: Ctx, project: Project, t: number, sources: Source
   ctx.fillRect(0, 0, W, H);
   const outlines: { m: DOMMatrix; r: { x: number; y: number; w: number; h: number } }[] = [];
   for (const L of visibleLayers(project, t)) {
-    const { clip, props: p, localT } = L;
+    const { clip, localT } = L;
+    // clip-level props (component-owned names neutralised); the component itself still gets L.props
+    const p = layerProps(L, W, H);
     const { tr, mo } = drawnState(L, W, H);
     const alpha = num(p, 'opacity', 1) * tr.alpha * mo.alpha;
     if (alpha <= 0.001) continue;
@@ -194,7 +220,7 @@ export function drawFrame(ctx: Ctx, project: Project, t: number, sources: Source
     } else if (clip.type === 'component') {
       const def = COMPONENTS[clip.component ?? ''];
       if (def) {
-        try { def.draw(ctx, p, { t: localT, duration: clip.duration, width: W, height: H, seed: componentSeed(clip.id) }); }
+        try { def.draw(ctx, L.props, { t: localT, duration: clip.duration, width: W, height: H, seed: componentSeed(clip.id) }); }
         catch (e) { console.error('component draw failed', clip.component, e); }
       }
     }

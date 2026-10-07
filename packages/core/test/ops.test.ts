@@ -108,3 +108,15 @@ describe('lint', () => {
     expect(readProject(d).clips.t.props.txt).toBe('hi');
   });
 });
+
+describe('components', () => {
+  it('own any shared prop name they define — the clip level does not apply it again', async () => {
+    const { COMPONENTS, layerProps } = await import('../src/index.ts');
+    const L = (component: string, props: Record<string, unknown>) => ({ clip: { id: 'c', type: 'component', component, props, keyframes: {}, start: 0, duration: 4, inPoint: 0, speed: 1, trackId: 't', name: '' }, track: {} as never, localT: 1, props }) as never;
+    expect(layerProps(L('text', { shadow: 40, opacity: 0.5 }), 1920, 1080)).toMatchObject({ shadow: 0, opacity: 0.5 });
+    expect(layerProps(L('particles', { opacity: 0.4 }), 1920, 1080)).toMatchObject({ opacity: 1 });
+    expect(layerProps(L('scribble', { x: 300, y: 200 }), 1920, 1080)).toMatchObject({ x: 960, y: 540 });
+    expect(layerProps(L('shape', { x: 300 }), 1920, 1080)).toMatchObject({ x: 300 });
+    expect(Object.keys(COMPONENTS).length).toBeGreaterThan(60);
+  });
+});

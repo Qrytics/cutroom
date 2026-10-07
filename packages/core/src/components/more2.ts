@@ -518,7 +518,7 @@ const stamp: ComponentDef = {
   description: 'Ink stamp ("APPROVED", "NEW!", "SOLD OUT", "SHIPPED") that slams down rotated with a settle shake, double rough border and ink speckle.',
   props: [
     text('text', 'Text', 'APPROVED', G.content), select('shape', 'Shape', 'rect', ['rect', 'circle', 'burst'], G.content), text('subtext', 'Small text', ''),
-    color('color', 'Ink color', '#e5383b'), num('size', 'Text size', 110, 6, 800), font('font', 'Archivo Black'), num('rotation', 'Rotation°', -12, -180, 180, 0.5),
+    color('color', 'Ink color', '#e5383b'), num('size', 'Text size', 110, 6, 800), font('font', 'Archivo Black'), num('tilt', 'Tilt°', -12, -180, 180, 0.5),
     num('slamDur', 'Slam duration', 0.32, 0.05, 5, 0.01, G.anim, false), num('ink', 'Ink roughness', 1, 0, 3, 0.05), ...animProps('none', 'fade', 0.3, 0.4),
   ],
   draw(ctx, p, f) {
@@ -526,7 +526,7 @@ const stamp: ComponentDef = {
     const k = clamp(f.t / N(p, 'slamDur')), sc = lerp(2.4, 1, ease('snap', k)), settle = f.t > N(p, 'slamDur') ? Math.exp(-(f.t - N(p, 'slamDur')) * 14) : 0;
     ctx.save(); applyEnvelope(ctx, p, f, cx, cy);
     ctx.globalAlpha *= clamp(k * 3) * 0.92;
-    ctx.translate(cx + Math.sin(f.t * 90) * settle * 6, cy + Math.cos(f.t * 70) * settle * 4); ctx.rotate(N(p, 'rotation') * Math.PI / 180); ctx.scale(sc, sc);
+    ctx.translate(cx + Math.sin(f.t * 90) * settle * 6, cy + Math.cos(f.t * 70) * settle * 4); ctx.rotate(N(p, 'tilt') * Math.PI / 180); ctx.scale(sc, sc);
     ctx.font = fnt(400, size, S(p, 'font'));
     const tw = ctx.measureText(txt).width, sub = S(p, 'subtext'), h = size * (sub ? 1.75 : 1.3), w = tw + size * 0.9, shape = S(p, 'shape');
     ctx.strokeStyle = c; ctx.fillStyle = c; ctx.lineJoin = 'round';
@@ -557,7 +557,7 @@ const badge: ComponentDef = {
   props: [
     text('text', 'Text', 'NEW', G.content), text('subtext', 'Small text', ''), select('shape', 'Shape', 'burst', ['pill', 'burst', 'circle', 'ribbon', 'tag'], G.content),
     color('fill', 'Fill', '#ffd43b'), color('textColor', 'Text color', '#111111'), color('outline', 'Outline (blank = none)', ''), num('size', 'Text size', 80, 6, 800),
-    font('font', 'Archivo Black'), num('rotation', 'Rotation°', -8, -180, 180, 0.5), bool('shine', 'Shine sweep', true), bool('wobble', 'Wobble', true), bool('shadow', 'Drop shadow', true),
+    font('font', 'Archivo Black'), num('tilt', 'Tilt°', -8, -180, 180, 0.5), bool('shine', 'Shine sweep', true), bool('wobble', 'Wobble', true), bool('shadow', 'Drop shadow', true),
     ...animProps('pop', 'pop', 0.5, 0.3),
   ],
   draw(ctx, p, f) {
@@ -969,7 +969,13 @@ const numberTicker: ComponentDef = {
     const nd = Math.max(String(Math.round(target)).length, String(Math.round(Math.abs(N(p, 'from')) * scale)).length, dec + 1);
     ctx.save(); applyEnvelope(ctx, p, f, f.width / 2, f.height / 2);
     ctx.font = fnt(N(p, 'weight'), size, S(p, 'font')); ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-    const dw = Math.max(...'0123456789'.split('').map((d) => ctx.measureText(d).width)) * 1.02, sepW = ctx.measureText(',').width, lh = size * 1.1;
+    const dw = Math.max(...'0123456789'.split('').map((d) => ctx.measureText(d).width)) * 1.02, sepW = ctx.measureText(',').width;
+    // real digit box: tall display fonts (Anton, Bebas…) sit off the 'middle' baseline and exceed size × 1.1 —
+    // centre the glyphs on the row and make each roll window tall enough that no neighbour digit peeks in
+    const gm = ctx.measureText('0123456789');
+    const asc = gm.actualBoundingBoxAscent || size * 0.36, desc = gm.actualBoundingBoxDescent || size * 0.36;
+    const glyphH = asc + desc, shift = (asc - desc) / 2, lh = Math.max(size * 1.1, glyphH * 1.45);
+    const settled = k >= 1;
     // layout right → left: digit columns, separators, decimal point
     type Cell = { kind: 'digit'; col: number } | { kind: 'char'; ch: string };
     const cells: Cell[] = [];
@@ -985,23 +991,26 @@ const numberTicker: ComponentDef = {
     const cy = f.height / 2 - (S(p, 'label') ? size * 0.2 : 0);
     let x = f.width / 2 - total / 2;
     ctx.fillStyle = S(p, 'color');
-    ctx.textAlign = 'left'; ctx.fillText(pre, x, cy); x += pw; ctx.textAlign = 'center';
+    ctx.textAlign = 'left'; ctx.fillText(pre, x, cy + shift); x += pw; ctx.textAlign = 'center';
     for (const c of cells) {
-      if (c.kind === 'char') { ctx.fillText(c.ch, x + sepW / 2, cy); x += sepW; continue; }
+      if (c.kind === 'char') { ctx.fillText(c.ch, x + sepW / 2, cy + shift); x += sepW; continue; }
       const colVal = v / 10 ** c.col, digit = Math.floor(colVal) % 10;
       // smooth roll only while the lower columns are passing 9 → 0 (true odometer behaviour)
       const lower = c.col === 0 ? colVal % 1 : clamp(((v / 10 ** (c.col - 1)) % 10) - 9);
       const leading = c.col > 0 && v < 10 ** c.col && target < 10 ** c.col;
       if (B(p, 'cells')) { ctx.fillStyle = S(p, 'cellColor'); roundRect(ctx, x + dw * 0.04, cy - lh / 2, dw * 0.92, lh, size * 0.08); ctx.fill(); ctx.fillStyle = S(p, 'color'); }
-      if (!leading) {
+      if (!leading && settled) {
+        // at rest: exactly the final digit, no clip, nothing from the roll strip
+        ctx.fillText(String(Math.floor(Math.round(target) / 10 ** c.col) % 10), x + dw / 2, cy + shift);
+      } else if (!leading) {
         ctx.save(); ctx.beginPath(); ctx.rect(x, cy - lh / 2, dw, lh); ctx.clip();
         const off = lower * lh;
-        ctx.fillText(String(digit), x + dw / 2, cy - off); ctx.fillText(String((digit + 1) % 10), x + dw / 2, cy - off + lh);
+        ctx.fillText(String(digit), x + dw / 2, cy + shift - off); ctx.fillText(String((digit + 1) % 10), x + dw / 2, cy + shift - off + lh);
         ctx.restore();
       }
       x += dw;
     }
-    ctx.textAlign = 'left'; ctx.fillText(suf, x, cy);
+    ctx.textAlign = 'left'; ctx.fillText(suf, x, cy + shift);
     if (S(p, 'label')) { ctx.fillStyle = S(p, 'labelColor'); ctx.textAlign = 'center'; ctx.font = fnt(500, size * 0.22, S(p, 'font')); ctx.fillText(S(p, 'label'), f.width / 2, cy + size * 0.78); }
     ctx.restore();
   },

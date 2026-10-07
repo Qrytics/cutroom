@@ -8,10 +8,11 @@ import { project } from './store.ts';
 // components whose job is to be text the viewer must read
 const TEXT = new Set(['text', 'title', 'lowerThird', 'captions', 'checklist', 'logoReveal', 'kineticType', 'wordCycle', 'blockReveal', 'splitFlap', 'highlighter',
   'quote', 'countdown', 'chatBubbles', 'notificationToast', 'socialPost', 'searchBar', 'button', 'callout', 'counter', 'barChart', 'lineChart', 'donutChart',
-  'comparison', 'timelineSteps', 'flowDiagram', 'codeTyping', 'terminal', 'progressBar']);
+  'comparison', 'timelineSteps', 'flowDiagram', 'codeTyping', 'terminal', 'progressBar',
+  'numberTicker', 'textPath', 'stamp', 'badge', 'calloutBubble', 'timer', 'starRating', 'typingIndicator', 'checkmarkSuccess', 'drawing']);
 // bare text drawn straight onto the scene — the only ones whose average color is a fair contrast measure
 // (cards, tiles, markers, bubbles and code windows bring their own backing)
-const BARE_TEXT = new Set(['text', 'title', 'captions', 'kineticType', 'wordCycle', 'quote', 'countdown', 'logoReveal', 'counter', 'checklist', 'timelineSteps']);
+const BARE_TEXT = new Set(['text', 'title', 'captions', 'kineticType', 'wordCycle', 'quote', 'countdown', 'logoReveal', 'counter', 'checklist', 'timelineSteps', 'numberTicker', 'textPath', 'timer']);
 // full-frame / deliberately oversized or edge-bleeding things — never flagged for edges or overlap
 const FULLFRAME = new Set(['background', 'overlay', 'particles', 'gradientOrb', 'confetti', 'flash', 'stripeWipe', 'shapeWipe', 'glitchTransition', 'marquee', 'spotlight', 'burst']);
 
@@ -90,7 +91,8 @@ export async function checkProject(id: string, opts: { times?: number[]; audio?:
       const sides = [x0 <= margin && 'left', y0 <= margin && 'top', x1 >= W - margin && 'right', y1 >= H - margin && 'bottom'].filter(Boolean);
       if (sides.length) once(`edge${c.id}`, 'error', `touches the ${sides.join('/')} edge of the frame (bbox ${L.bbox.join(',')}) — text is probably cut off; reduce size/maxWidth or move it`, c.id, f.t);
       else if (x0 < W * 0.04 || x1 > W * 0.96 || y0 < H * 0.04 || y1 > H * 0.96) once(`safe${c.id}`, 'warn', `sits outside the title-safe area (bbox ${L.bbox.join(',')}) — keep text ≥ 4% from the edges`, c.id, f.t);
-      if (reel && (y1 > H * 0.78 || x1 > W * 0.86)) once(`reel${c.id}`, 'warn', `enters the Reels/TikTok UI zone (bottom 22% / right 14%) — bbox ${L.bbox.join(',')}`, c.id, f.t);
+      // the app's caption sits along the bottom; the like/comment/share column runs down the right side of the lower half
+      if (reel && (y1 > H * 0.78 || (x1 > W * 0.86 && y1 > H * 0.45))) once(`reel${c.id}`, 'warn', `enters the Reels/TikTok UI zone (bottom 22%, or the right 14% of the lower half) — bbox ${L.bbox.join(',')}`, c.id, f.t);
       if (BARE_TEXT.has(L.kind ?? '') && L.contrast !== null && L.contrast < 2.2 && L.coverage > 0.0008) once(`contrast${c.id}`, 'warn', `low contrast ${L.contrast}:1 against what's behind it — darken/lighten the backdrop, add a stroke/shadow/box, or change the color`, c.id, f.t);
       texts.push(L);
     }

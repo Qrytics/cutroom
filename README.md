@@ -186,6 +186,17 @@ The `music` preset writes an original track for the clip length:
 Playfair Display, Bebas Neue, Syne, DM Serif Display, Archivo Black, Instrument Serif, Unbounded, Sora, Fraunces,
 Anton, Space Mono, Manrope, Outfit, Major Mono Display, Caveat, plus system-ui, Georgia and Helvetica.
 
+### Reels, Shorts and TikTok
+
+Ask for a vertical video (1080×1920) and the skill builds for those platforms:
+
+- The video loops seamlessly: the last frame matches the first, closing into a colored iris and opening from it,
+  with a matching sound.
+- Text stays out of the app's caption area and like/comment column, and `check` flags anything that strays in.
+- Main blocks sit on the center line, with accents like a tilted sticker breaking symmetry on purpose.
+- On-screen copy is plain language.
+- Claude can record real screen captures of a product, with a visible cursor and private details hidden.
+
 ## Art directions ("looks")
 
 The usual reason generated videos look samey is that every one gets the same blue glow, the same font, the same
