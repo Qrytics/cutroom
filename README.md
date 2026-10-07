@@ -237,6 +237,13 @@ so it builds videos on the shared server too. Everyone sees every edit live.
 
 ### 1. Host a session
 
+Easiest: click **Share** in the editor's top bar and choose **🌐 Share with anyone** (people anywhere, through a
+secure link) or **🏢 Share on my network**. Cutroom restarts itself in team mode, and the dialog shows the invite link
+plus the exact command a teammate runs to connect their Claude, each with a Copy button. **Stop sharing** makes it
+private again.
+
+From a terminal instead:
+
 ```bash
 npm run team                 # people on the same network or VPN can join
 npm run team -- --internet   # anyone, anywhere: a free, encrypted Cloudflare tunnel (no account, no router setup)

@@ -187,7 +187,8 @@ with props, keyframes and effects. While you hold the lock, humans are view-only
 ## 7b. Team, restore, hand-made graphics
 - **Team server**: if `CUTROOM_URL` points elsewhere, you're on a shared server. Same tools; `import_media` uploads
   local files, and `export_video` downloads the result to `~/Downloads`. Never ask the user to restart it. If they
-  want collaborators: `npm run team` (same network) or `npm run team -- --internet` (anywhere). Give them the printed
+  want collaborators: tell them to click **Share** in the editor (one click: anyone anywhere, or same network — it shows
+  the invite and the teammate command), or run `npm run team` / `npm run team -- --internet`. Give them the printed
   invite link and the teammate install line.
 - **Restore**: when you finish, the delivered version is saved as "Claude's original". The editor's ↺ Restore resets
   to it, to any version, or to a `.cutroom.json` (each export writes one next to the video). Offer it when the user

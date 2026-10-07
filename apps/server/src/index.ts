@@ -1,5 +1,6 @@
 // Cutroom server: realtime project sync, the edit-ops API that Claude drives, media library, rendering.
 // One port serves everything — the editor UI (via Vite), /api, /media, /exports and the /yjs websocket.
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -66,10 +67,36 @@ app.get('/api/catalog', h(() => catalog()));
 function invites() {
   const t = team();
   const lanIp = HOST === '0.0.0.0' ? Object.values(os.networkInterfaces()).flat().find((i) => i?.family === 'IPv4' && !i.internal)?.address : undefined;
-  return { token: t.token, lan: lanIp ? `http://${lanIp}:${PORT}/join/${t.token}` : undefined, public: t.publicUrl ? `${t.publicUrl.replace(/\/$/, '')}/join/${t.token}` : undefined };
+  const lan = lanIp ? `http://${lanIp}:${PORT}/join/${t.token}` : undefined;
+  const pub = t.publicUrl ? `${t.publicUrl.replace(/\/$/, '')}/join/${t.token}` : undefined;
+  const best = pub || lan;
+  const install = 'curl -fsSL https://raw.githubusercontent.com/Qrytics/cutroom/main/scripts/install.sh | bash';
+  return {
+    token: t.token, lan, public: pub, mode: pub ? 'internet' : lan ? 'network' : 'off', canStop: !!process.env.CUTROOM_TEAM_PID,
+    teammateCommand: best ? `${install} -s -- --join "${best}"` : undefined, skillCommand: install,
+  };
 }
 const hostOnly = (req: Request) => { if (!isLocalRequest(req)) throw fail(403, 'only the host machine can do this'); };
 app.get('/api/team', h((req) => { hostOnly(req); return invites(); }));
+// the editor's Share button: (re)start this server in team mode (+ internet tunnel) or go back to private
+app.post('/api/team/start', h((req) => {
+  hostOnly(req);
+  const internet = !!req.body?.internet;
+  const log = fs.openSync(path.join(DATA, 'team-run.log'), 'w');
+  // the new team session shuts this server down (projects are saved first) and starts its own; a previous team
+  // session exits along with its server (closing its tunnel). The editor reconnects on its own.
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  delete env.CUTROOM_TEAM_PID; delete env.HOST;
+  spawn(process.execPath, [path.join(ROOT, 'scripts', 'team.mjs'), ...(internet ? ['--internet'] : [])], { cwd: ROOT, detached: true, stdio: ['ignore', log, log], env }).unref();
+  return { starting: internet ? 'internet' : 'network' };
+}));
+app.post('/api/team/stop', h((req) => {
+  hostOnly(req);
+  const pid = Number(process.env.CUTROOM_TEAM_PID);
+  if (!pid) return { mode: 'off' };
+  process.kill(pid, 'SIGUSR2');
+  return { stopping: true };
+}));
 app.post('/api/team/public', h((req) => { hostOnly(req); setPublicUrl(req.body?.url || undefined); return invites(); }));
 // Roll an art direction; looks used by the most recent projects are avoided unless one is requested by key.
 app.get('/api/looks/roll', h((req) => {
