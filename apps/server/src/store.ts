@@ -94,14 +94,15 @@ export function project(id: string): Project {
 }
 
 // ---------------------------------------------------------------- snapshots (versions)
-export interface SnapshotInfo { id: string; label: string; at: number; author: string; clips: number }
+/** kind: 'original' = the version Claude delivered when it finished; 'auto' = saved before an edit run or a restore */
+export interface SnapshotInfo { id: string; label: string; at: number; author: string; clips: number; kind?: 'original' | 'auto' | 'manual' }
 
 const snapDir = (id: string) => path.join(dir(id), 'snapshots');
 
-export function createSnapshot(id: string, label: string, author: string): SnapshotInfo {
+export function createSnapshot(id: string, label: string, author: string, kind: SnapshotInfo['kind'] = 'manual'): SnapshotInfo {
   const p = project(id);
   fs.mkdirSync(snapDir(id), { recursive: true });
-  const info: SnapshotInfo = { id: `s${Date.now().toString(36)}`, label, at: Date.now(), author, clips: Object.keys(p.clips).length };
+  const info: SnapshotInfo = { id: `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, label, at: Date.now(), author, clips: Object.keys(p.clips).length, kind };
   fs.writeFileSync(path.join(snapDir(id), `${info.id}.json`), JSON.stringify({ ...info, project: { meta: p.meta, tracks: p.tracks, clips: p.clips, markers: p.markers } }));
   return info;
 }
@@ -119,5 +120,19 @@ export function readSnapshot(id: string, sid: string) {
   if (!fs.existsSync(f)) throw Object.assign(new Error('no such snapshot'), { status: 404 });
   return JSON.parse(fs.readFileSync(f, 'utf8')) as SnapshotInfo & { project: Pick<Project, 'meta' | 'tracks' | 'clips' | 'markers'> };
 }
+
+// ---------------------------------------------------------------- project files (a version you keep on disk)
+export const PROJECT_FILE_FORMAT = 'cutroom-project';
+
+/** A self-contained snapshot of the timeline plus where its media came from, to save next to an export or anywhere. */
+export function projectFile(id: string) { return projectFileOf(project(id)); }
+export function projectFileOf(p: Project) {
+  return {
+    format: PROJECT_FILE_FORMAT, version: 1, savedAt: new Date().toISOString(), projectId: p.id, name: p.meta.name,
+    project: { meta: p.meta, tracks: p.tracks, clips: p.clips, markers: p.markers },
+    media: Object.values(p.media).map((m) => ({ id: m.id, name: m.name, kind: m.kind, sourcePath: m.sourcePath, duration: m.duration })),
+  };
+}
+export type ProjectFile = ReturnType<typeof projectFile>;
 
 export { replaceContent };

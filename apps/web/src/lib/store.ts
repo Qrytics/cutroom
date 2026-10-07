@@ -23,6 +23,14 @@ export function saveMe(me: Author) {
   try { localStorage.setItem('cutroom.me', JSON.stringify({ id: me.id, name: me.name })); } catch { /* storage unavailable */ }
 }
 
+export type Tool = 'select' | 'text' | 'pen' | 'line' | 'arrow' | 'rect' | 'ellipse';
+export interface Brush { color: string; width: number; style: 'pen' | 'marker' | 'highlighter' | 'neon' | 'chalk' | 'brush'; fill: boolean; drawOn: boolean }
+const BRUSH_DEFAULT: Brush = { color: '#ffd43b', width: 10, style: 'pen', fill: false, drawOn: true };
+function loadBrush(): Brush {
+  try { return { ...BRUSH_DEFAULT, ...JSON.parse(localStorage.getItem('cutroom.brush') || '{}') }; } catch { return BRUSH_DEFAULT; }
+}
+export function saveBrush(b: Brush) { try { localStorage.setItem('cutroom.brush', JSON.stringify(b)); } catch { /* storage unavailable */ } }
+
 interface Toast { id: number; text: string; kind?: 'info' | 'error' | 'ok' }
 
 interface State {
@@ -36,6 +44,9 @@ interface State {
   pxPerSec: number;
   follow: boolean;
   safeArea: boolean;
+  /** preview tool: select/move, or one of the create tools */
+  tool: Tool;
+  brush: Brush;
   flashes: Record<string, number>;
   toasts: Toast[];
   set: (p: Partial<State>) => void;
@@ -53,6 +64,8 @@ export const useEditor = create<State>((set, get) => ({
   pxPerSec: 80,
   follow: true,
   safeArea: false,
+  tool: 'select',
+  brush: loadBrush(),
   flashes: {},
   toasts: [],
   set: (p) => set(p),

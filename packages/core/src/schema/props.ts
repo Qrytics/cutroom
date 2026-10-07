@@ -1,5 +1,6 @@
 // Property definitions drive the inspector UI, op validation docs for Claude, and default values.
 import type { ClipType, Props } from './types.ts';
+import { EASES } from '../engine/ease.ts';
 
 export type PropType = 'number' | 'text' | 'longtext' | 'color' | 'select' | 'bool' | 'font';
 
@@ -26,7 +27,14 @@ export const FONTS = [
 ];
 
 export const TRANSITIONS = ['none', 'fade', 'slideLeft', 'slideRight', 'slideUp', 'slideDown', 'zoomIn', 'zoomOut', 'wipeLeft', 'wipeRight', 'blur', 'spin',
-  'iris', 'wipeUp', 'wipeDown', 'diagonal', 'blinds', 'split', 'whipLeft', 'whipRight', 'zoomBlur', 'flipX', 'flipY', 'drop', 'rise', 'glitch', 'swing', 'stretch'];
+  'iris', 'wipeUp', 'wipeDown', 'diagonal', 'blinds', 'split', 'whipLeft', 'whipRight', 'zoomBlur', 'flipX', 'flipY', 'drop', 'rise', 'glitch', 'swing', 'stretch',
+  'pushLeft', 'pushRight', 'pushUp', 'pushDown', 'slideFadeUp', 'slideFadeDown', 'zoomRotate', 'zoomPunch', 'shrink', 'grow', 'elastic', 'blurZoom', 'pixelate',
+  'flipUp', 'flipDown', 'cubeLeft', 'cubeRight', 'rollIn', 'squeezeH', 'squeezeV', 'bounceIn', 'jello',
+  'clockWipe', 'barnDoorsH', 'barnDoorsV', 'checker', 'radialIn', 'diamond', 'wipeDiagonalUp', 'wipeDiagonalDown', 'venetian', 'stripes', 'inkReveal', 'glitchSlice',
+  'lightLeak', 'dipToBlack', 'dipToWhite', 'filmBurn'];
+/** one-shot or repeating attention moves on any visual clip (Animate.css-style) */
+export const EMPHASES = ['none', 'pulse', 'heartbeat', 'shake', 'shakeY', 'wobble', 'tada', 'jello', 'bounce', 'rubberBand', 'swing', 'flash', 'headShake', 'pop',
+  'spin', 'flipX', 'flipY', 'float', 'zoomIn', 'zoomOut', 'nudgeLeft', 'nudgeRight', 'jump', 'squash', 'wiggle', 'blink', 'breathe', 'tilt'];
 export const MOTIONS = ['none', 'float', 'sway', 'wiggle', 'shake', 'handheld', 'pulse', 'breathe', 'spin', 'orbit', 'bob', 'flicker'];
 export const BLEND_MODES = ['source-over', 'multiply', 'screen', 'overlay', 'lighten', 'darken', 'color-dodge', 'difference', 'soft-light', 'hard-light'];
 
@@ -70,6 +78,17 @@ export const TRANSITION_PROPS: PropDef[] = [
   n('transitionInDuration', 'In duration', 'Transitions', 0.5, 0, 10, 0.05, false),
   { key: 'transitionOut', label: 'Out', type: 'select', group: 'Transitions', default: 'none', options: TRANSITIONS },
   n('transitionOutDuration', 'Out duration', 'Transitions', 0.5, 0, 10, 0.05, false),
+  { key: 'transitionInEase', label: 'In easing', type: 'select', group: 'Transitions', default: '', options: ['', ...EASES], hint: 'blank = the transition\'s own curve' },
+  { key: 'transitionOutEase', label: 'Out easing', type: 'select', group: 'Transitions', default: '', options: ['', ...EASES], hint: 'blank = the transition\'s own curve' },
+];
+
+export const EMPHASIS_PROPS: PropDef[] = [
+  { key: 'emphasis', label: 'Emphasis', type: 'select', group: 'Emphasis', default: 'none', options: EMPHASES },
+  n('emphasisAt', 'Starts at (clip s)', 'Emphasis', 0.5, 0, 3600, 0.05, false),
+  n('emphasisDuration', 'Duration', 'Emphasis', 0.8, 0.05, 30, 0.05, false),
+  n('emphasisRepeat', 'Repeat (0 = loop)', 'Emphasis', 1, 0, 100, 1, false),
+  n('emphasisInterval', 'Gap between repeats', 'Emphasis', 0.4, 0, 30, 0.05, false),
+  n('emphasisAmount', 'Amount', 'Emphasis', 1, 0, 10, 0.05),
 ];
 
 /** Continuous procedural motion layered on top of the transform (handheld camera, float, shake…). */
@@ -106,7 +125,7 @@ export function basePropDefs(type: ClipType): PropDef[] {
   const out: PropDef[] = [];
   if (isVisual(type)) out.push(...TRANSFORM_PROPS);
   if (type === 'video' || type === 'image') out.push(...MEDIA_PROPS);
-  if (isVisual(type)) out.push(...EFFECT_PROPS, ...TRANSITION_PROPS, ...MOTION_PROPS);
+  if (isVisual(type)) out.push(...EFFECT_PROPS, ...TRANSITION_PROPS, ...EMPHASIS_PROPS, ...MOTION_PROPS);
   if (isAudible(type)) out.push(...AUDIO_PROPS);
   return out;
 }

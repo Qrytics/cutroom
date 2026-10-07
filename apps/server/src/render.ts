@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { chromium, type Browser, type Page } from 'playwright';
 import { projectDuration, uid, type Project } from '@cutroom/core';
 import { FFMPEG, run } from './media.ts';
-import { EXPORTS, project } from './store.ts';
+import { EXPORTS, project, projectFileOf } from './store.ts';
 
 let browserP: Promise<Browser> | null = null;
 let origin = 'http://127.0.0.1:4317';
@@ -151,6 +151,8 @@ async function runExport(job: Job, range: { from?: number; to?: number } = {}) {
   args.push(out);
   await run(FFMPEG, args);
   fs.rmSync(work, { recursive: true, force: true });
+  // the exact timeline that produced this file, next to it — "Restore from file" brings this version back
+  fs.writeFileSync(out.replace(/\.[^.]+$/, '.cutroom.json'), JSON.stringify(projectFileOf(p), null, 1));
   job.status = 'done'; job.progress = 1; job.file = out; job.url = `/exports/${name}`; job.finishedAt = Date.now();
   job.message = `done in ${((job.finishedAt - job.startedAt) / 1000).toFixed(0)}s`;
 }

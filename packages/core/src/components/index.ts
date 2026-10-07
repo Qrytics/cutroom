@@ -5,6 +5,8 @@ import { type Ctx, drawText, fontStr, mix, type FrameInfo, layoutText, roundRect
 
 import { animOf, animProps, applyEnvelope, B, bool, color, type ComponentDef, envelope, font, G, N, num, S, select, styleOf, text } from './kit.ts';
 import { MORE_COMPONENTS } from './more.ts';
+import { USER_COMPONENTS } from './user.ts';
+import { MORE2_COMPONENTS } from './more2.ts';
 
 export type { Ctx, FrameInfo } from './draw.ts';
 export type { ComponentDef } from './kit.ts';
@@ -944,7 +946,7 @@ const image3d: ComponentDef = {
 };
 
 export const COMPONENTS: Record<string, ComponentDef> = Object.fromEntries(
-  [textComp, title, lowerThird, captions, checklist, image3d, codeTyping, terminal, cursor, browserFrame, callout, counter, barChart, progressBar, shape, background, confetti, stripeWipe, flash, ...MORE_COMPONENTS]
+  [textComp, title, lowerThird, captions, checklist, image3d, codeTyping, terminal, cursor, browserFrame, callout, counter, barChart, progressBar, shape, background, confetti, stripeWipe, flash, ...MORE_COMPONENTS, ...MORE2_COMPONENTS, ...USER_COMPONENTS]
     .map((c) => [c.key, c]),
 );
 

@@ -15,6 +15,7 @@ music genre, sound kit), so two videos don't come out looking like copy-paste.
 - [Using it with Claude](#using-it-with-claude)
 - [What Claude can make](#what-claude-can-make)
 - [Art directions ("looks")](#art-directions-looks)
+- [Share it with your team](#share-it-with-your-team)
 - [The editor](#the-editor)
 - [Export](#export)
 - [Architecture](#architecture)
@@ -42,11 +43,7 @@ scripts that newer npm versions block). Restart any open Claude Code session aft
 You don't need to start the server yourself: the MCP tools start it and replace it automatically when its code is
 outdated. To use the editor without Claude: `npm start` → http://localhost:4317.
 
-To let collaborators on your network join the same session:
-
-```bash
-npm run team                      # binds 0.0.0.0 and prints your LAN URL
-```
+To work on the same videos with other people, in the office or anywhere: [Share it with your team](#share-it-with-your-team).
 
 Projects, media, versions and exports live in `data/` (git-ignored).
 
@@ -121,7 +118,7 @@ Any numeric or color prop can be keyframed.
 Every item below is a parametric component or preset. It is a pure function of its props and time, so preview,
 scrubbing and export are frame-identical, and every option is editable in the inspector.
 
-### Motion graphics (46 components)
+### Motion graphics (71 components)
 
 | Category | Components |
 |---|---|
@@ -130,14 +127,17 @@ scrubbing and export are frame-identical, and every option is editable in the in
 | **Data** | `counter`, `barChart`, `lineChart`, `donutChart`, `comparison`, `timelineSteps`, `flowDiagram` (auto-layout from `A -> B` lines), `progressBar` |
 | **Background & depth** | `background` (19 styles: solid, linear, radial, glow, grid, dots, blobs, noise, mesh, aurora, waves, starfield, stripes, conic, perspectiveGrid, topo, bokeh, halftone, paper), `gradientOrb`, `particles` (dust, bokeh, sparks, snow, stars, bubbles, fireflies, rain, embers) |
 | **Texture & effects** | `overlay` (grain, scanlines, lightLeak, vhs, letterbox, halftone, filmBurn, chromatic, crt), `burst`, `confetti` (4 styles incl. emoji), `scribble` (hand-drawn arrows, circles, checks…), `shape` (13 shapes incl. a morphing blob) |
-| **Transitions** | `shapeWipe` (circle, diamond, blinds, grid, clock, doors, zoomRings, slats, liquid), `stripeWipe`, `glitchTransition`, `flash` |
+| **Icons, accents & UI bits** | `icon` (57 line icons, draw-on), `iconBurst`, `stamp`, `badge`, `arrowPointer`, `focusBox`, `checkmarkSuccess`, `starRating`, `ripple`, `pathDraw`, `drawing` (hand-drawn in the editor), `morphShape`, `orbit`, `textPath`, `numberTicker`, `timer`, `loader`, `typingIndicator`, `calloutBubble`, `swipeHint`, `waveform`, `liquidBlob`, `emojiRain` |
+| **Transitions** | `shapeWipe` (circle, diamond, blinds, grid, clock, doors, zoomRings, slats, liquid), `revealMask`, `gridReveal`, `stripeWipe`, `glitchTransition`, `flash` |
 
 ### Motion system
 
-- **Text animation**: 26 entrances (fade, rise, drop, pop, slide, blurIn, typewriter, wordsUp/Pop, letters,
+- **Text animation**: 46 entrances (fade, rise, drop, pop, slide, blurIn, typewriter, wordsUp/Pop, letters,
   charsUp/Pop, scramble, maskUp, tracking, flipUp, skewIn, glitchIn, zoomBlur, stamp, splitIn, waveIn, elastic…),
   17 exits, per-word/char stagger, plus a settled `loop` (float, wave, pulse, jitter, shimmer, glow).
-- **Clip transitions** (any visual clip, in and out): 28. These are fade, slide ×4, zoom ×2, wipe ×4, iris, diagonal,
+- **Emphasis** (any visual clip): 27 one-shot or repeating attention moves (pulse, heartbeat, shake, tada, jello,
+  rubberBand, headShake, pop, jump, squash…) fired at a chosen moment.
+- **Clip transitions** (any visual clip, in and out): 66, with their own easing. These are fade, slide ×4, zoom ×2, wipe ×4, iris, diagonal,
   blinds, split, whip ×2, blur, zoomBlur, spin, flipX/Y, drop, rise, glitch, swing and stretch.
 - **Camera motion** (any visual clip): `motion` = float, sway, wiggle, shake, handheld, pulse, breathe, spin, orbit,
   bob or flicker, with amount and speed. It is deterministic per clip.
@@ -146,7 +146,7 @@ scrubbing and export are frame-identical, and every option is editable in the in
 - **Effects** on any visual clip: blur, brightness, contrast, saturation, hue, grayscale, sepia, invert, crop,
   corner radius, drop shadow, blend modes, vignette.
 
-### Sound (71 synthesized presets)
+### Sound (233 synthesized presets)
 
 Every sound is generated from parameters at 48 kHz. Nothing is sampled, so pitch, length, tone and variation stay
 editable, and the same seed always gives the same sound in preview and export.
@@ -230,18 +230,85 @@ The skill (`skill/video-editor/SKILL.md`) adds anti-template rules on top:
 - Fire one sound effect per visual hit, varying it on repeats.
 - Never ship a component on its default props.
 
+## Share it with your team
+
+One person hosts. Everyone else opens an invite link in a browser, and can optionally connect their own Claude Code
+so it builds videos on the shared server too. Everyone sees every edit live.
+
+### 1. Host a session
+
+```bash
+npm run team                 # people on the same network or VPN can join
+npm run team -- --internet   # anyone, anywhere: a free, encrypted Cloudflare tunnel (no account, no router setup)
+```
+
+It prints an **invite link** and a one-line command for teammates. Keep it running; Ctrl+C ends the session, and
+projects stay saved.
+
+### 2. Teammates join
+
+- **In a browser:** open the invite link. It signs them in and they pick a name; no install needed.
+- **With their own Claude** (so "make me a video" works for them too, live on your server), they run once:
+
+  ```bash
+  curl -fsSL https://raw.githubusercontent.com/Qrytics/cutroom/main/scripts/install.sh | bash -s -- --join "<invite link>"
+  ```
+
+  It installs Cutroom to `~/cutroom`, connects their Claude Code to your server and installs the skill.
+  Their media uploads from their own computer and exports download back to their `~/Downloads`. To switch back to a
+  local Cutroom later: `npm run setup -- --local`.
+- **To share just the skill with someone who'll host their own:** send them the same command without `--join`.
+
+### Access and security
+
+- Everyone except the host machine needs the invite. Without it they get a "this Cutroom server is private" page,
+  and the API, media and live sync all refuse them. Tunnelled traffic counts as remote.
+- The invite link sets a long-lived, HttpOnly cookie in their browser (Secure over https). Teammates' Claude sends
+  the invite as a bearer token.
+- `npm run team -- --new-invite` replaces the invite; old links stop working.
+- The `--internet` quick-tunnel address changes every time you restart it, so send the new invite then.
+
+### Always-on team server
+
+For a permanent address everyone keeps (an office machine, a cloud VM, Fly.io, Render, Railway…), use the Dockerfile:
+
+```bash
+docker build -t cutroom .
+docker run -d --name cutroom -p 4317:4317 -v cutroom-data:/data \
+  -e CUTROOM_PUBLIC_URL=https://video.example.com -e CUTROOM_TOKEN=pick-a-long-random-code cutroom
+docker logs cutroom          # prints the invite link
+```
+
+Put it behind HTTPS (your platform's TLS or a reverse proxy) and share `https://video.example.com/join/<code>`.
+Or keep it on an office machine with `npm run team` and give remote people access through your VPN or
+[Tailscale](https://tailscale.com); use the LAN invite link then.
+
 ## The editor
 
 - **Library**: media (drag in files), components by category, and sounds; click ▶ to audition a sound.
-- **Preview**: drag to move (snaps to center lines), ⌥-scroll to scale, safe-area guides (incl. Reels UI zones).
+- **Preview**: click an object to select exactly what's under the pointer. Alt-click selects the object underneath.
+  Drag to move (snaps to center lines); drag a **corner dot** to resize (Shift = stretch); drag the **⟳ knob** to
+  rotate (Shift = 15° steps). ⌥-scroll scales. Safe-area guides include the Reels UI zones.
+- **Create your own** (toolbar above the preview, also under Library → Graphics):
+  - **T** text: click and type right on the video
+  - **P** pen: freehand drawing
+  - **U** line and **A** arrow: Shift snaps to 45°
+  - **R** rectangle and **O** ellipse: Shift makes a square or circle
+
+  Each takes a color, thickness and look (pen, marker, highlighter, neon, chalk, brush), with fill and draw-on
+  toggles. Drawings replay the way you drew them, and each becomes a normal clip you can move, resize, rotate,
+  keyframe and restyle.
 - **Inspector**: every prop grouped (Content, Style, Animation, Layout, Transform, Motion, Effects, Transitions,
   Audio), keyframe toggles (◆), and a curve view.
 - **Timeline**: multiple tracks, trim/move/split, snapping, waveforms, markers, and collaborators' selections.
-- **Activity log & versions**: every edit is attributed to Claude or a person. Versions are snapshotted when Claude
-  starts, and **Undo Claude's last run** restores the version saved before it.
+- **↺ Restore**: **Reset to Claude's original** (saved automatically when Claude finishes), restore any saved
+  version, or restore from a file on your computer. Every export writes a `.cutroom.json` next to the video, and
+  "Save this version to a file" downloads one any time. A restore first saves what you have, so it can be undone.
+- **Activity log & versions**: every edit is attributed to Claude or a person; versions are saved automatically
+  before every Claude run and every restore.
 - **Lock banner**: shows who's editing and their task. You can take over a stalled lock.
 
-Keyboard: Space play · S split · ⌫ delete · ⇧⌫ ripple delete · ⌘D duplicate · ⌘Z / ⇧⌘Z undo/redo · M marker ·
+Keyboard: V select · T text · P pen · U line · A arrow · R rect · O ellipse · Esc back to select · Space play · S split · ⌫ delete · ⇧⌫ ripple delete · ⌘D duplicate · ⌘Z / ⇧⌘Z undo/redo · M marker ·
 ←/→ frame step (⇧ = 1 s) · J/K/L shuttle · +/− or ⌘-scroll zoom · double-click a prop label to reset it.
 Once a prop is animated, changing its value at the playhead adds a keyframe automatically.
 

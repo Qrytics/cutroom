@@ -3,6 +3,7 @@ import { projectDuration } from '@cutroom/core';
 import { api, fmtTime } from '../lib/api.ts';
 import { colorFor, session, useEditor } from '../lib/store.ts';
 import { navigate } from '../main.tsx';
+import { RestoreDialog } from './RestoreDialog.tsx';
 
 interface Job { id: string; status: string; progress: number; message: string; url?: string; error?: string; preset: string }
 
@@ -13,6 +14,7 @@ export function TopBar() {
   const connected = useEditor((s) => s.connected);
   const safeArea = useEditor((s) => s.safeArea);
   const [exporting, setExporting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const lock = project.lock;
   const mine = lock?.holder === me.id;
   const readOnly = !!lock && !mine;
@@ -44,8 +46,10 @@ export function TopBar() {
       <button className={`ghost ${safeArea ? 'active' : ''}`} title="Safe-area guides" onClick={() => useEditor.setState({ safeArea: !safeArea })}>▣</button>
       {(!lock || mine) && <button className={mine ? 'warn' : 'ghost'} title="Lock the project so nobody else edits while you work" onClick={holdLock}>{mine ? '🔓 Release lock' : '🔒 Hold lock'}</button>}
       <button className="ghost" title="Copy a link collaborators can open" onClick={() => { navigator.clipboard?.writeText(location.href); useEditor.getState().toast('Link copied — anyone on your network can join'); }}>Share</button>
+      <button className="ghost" title="Reset to Claude's original, restore any saved version, or load a version from a file" onClick={() => setRestoring(true)}>↺ Restore</button>
       <button className="primary" onClick={() => setExporting(true)}>Export</button>
       {exporting && <ExportDialog onClose={() => setExporting(false)} />}
+      {restoring && <RestoreDialog onClose={() => setRestoring(false)} />}
     </div>
   );
 }

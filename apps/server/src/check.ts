@@ -73,7 +73,8 @@ export async function checkProject(id: string, opts: { times?: number[]; audio?:
   const seen = new Set<string>();
   const once = (key: string, level: 'error' | 'warn', msg: string, clip?: string, t?: number) => { if (!seen.has(key)) { seen.add(key); add(level, msg, clip, t); } };
   for (const f of frames) {
-    if (f.std < 1.5) once(`flat${Math.round(f.t)}`, 'warn', `frame is a flat color (luma ${f.luma}) — nothing visible`, undefined, f.t);
+    // starting/ending on a plain color (fade from black/white) is normal; anywhere else a flat frame means nothing shows
+    if (f.std < 1.5 && f.t > 0.5 && f.t < dur - 0.5) once(`flat${Math.round(f.t)}`, 'warn', `frame is a flat color (luma ${f.luma}) — nothing visible`, undefined, f.t);
     const texts: Layer[] = [];
     for (const L of f.layers) {
       const c = p.clips[L.id];

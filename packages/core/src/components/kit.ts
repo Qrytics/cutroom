@@ -56,7 +56,7 @@ export function applyEnvelope(ctx: Ctx, p: Props, f: FrameInfo, cx: number, cy: 
   const { kin, kout, a } = envelope(p, f);
   const lin = win(f.t, 0, a.inDur, 'linear'), lout = a.animOut === 'none' ? 0 : win(f.t, f.duration - a.outDur, a.outDur, 'linear');
   let alpha = clamp(kin * 1.4) * (1 - kout);
-  let s = 1, sx = 1, sy = 1, dy = 0, dx = 0, skew = 0, blur = 0;
+  let s = 1, sx = 1, sy = 1, dy = 0, dx = 0, skew = 0, blur = 0, rot = 0, hue = 0;
   const jit = (salt: number) => rng(mix(f.seed + salt + Math.floor(f.t * 30) * 7919));
   switch (a.animIn) {
     case 'pop': case 'wordsPop': case 'charsPop': s *= lerp(0.6, 1, ease('backOut', lin)); break;
@@ -78,7 +78,19 @@ export function applyEnvelope(ctx: Ctx, p: Props, f: FrameInfo, cx: number, cy: 
       if (after > 0 && after < 0.3) { dx += Math.sin(after * 95) * 8 * (1 - after / 0.3); dy += Math.cos(after * 80) * 6 * (1 - after / 0.3); }
       break;
     }
-    case 'glitchIn': case 'scramble': if (lin < 1) { const r = jit(1); dx += (r() - 0.5) * 80 * (1 - lin); if (r() < 0.35 * (1 - lin)) alpha *= 0.15; } break;
+    case 'glitchIn': case 'scramble': case 'shuffle': if (lin < 1) { const r = jit(1); dx += (r() - 0.5) * 80 * (1 - lin); if (r() < 0.35 * (1 - lin)) alpha *= 0.15; } break;
+    case 'charsBlur': case 'wordsBlur': blur = (1 - kin) * 18; break;
+    case 'charsRotate': case 'wordsRotate': rot = -(1 - kin) * 0.4; dy += (1 - kin) * 30; break;
+    case 'charsFlip': case 'unfold': sx *= Math.max(0.001, ease('backOut', lin)); break;
+    case 'wave3d': sy *= Math.max(0.001, ease('backOut', lin)); dy -= Math.sin(Math.PI * lin) * 20; break;
+    case 'charsDrop': dy -= (1 - kin) * 70; break;
+    case 'cascade': dy -= (1 - ease('bounceOut', lin)) * 120; alpha = clamp(lin * 4) * (1 - kout); break;
+    case 'charsZoom': s *= lerp(2.2, 1, kin); break;
+    case 'wordsSlideLeft': dx += (1 - kin) * 120; break;
+    case 'wordsSlideRight': dx -= (1 - kin) * 120; break;
+    case 'linesUp': dy += (1 - kin) * 50; break;
+    case 'neonFlicker': if (lin < 1) { const r = jit(3); if (lin <= 0 || r() < 0.55 * (1 - lin)) alpha *= 0.08; } break;
+    // typewriterFade, charsFade, linesFade, spotlight, highlightSweep: the plain fade-in of the envelope
   }
   switch (a.animOut) {
     case 'sink': case 'wordsDown': case 'charsDown': case 'maskDown': dy += kout * 60; break;
@@ -92,16 +104,31 @@ export function applyEnvelope(ctx: Ctx, p: Props, f: FrameInfo, cx: number, cy: 
     case 'trackingOut': sx *= 1 + kout * 0.35; break;
     case 'glitchOut': case 'scrambleOut': if (lout > 0) { const r = jit(2); dx += (r() - 0.5) * 80 * lout; if (r() < 0.5 * lout) alpha *= 0.1; } break;
     case 'blink': alpha = clamp(kin * 1.4) * (lout >= 1 ? 0 : Math.floor(lout * 8) % 2 === 0 ? 1 : 0); break;
+    case 'charsBlur': blur = kout * 16; break;
+    case 'charsUp': case 'wordsUp': dy -= kout * 60; break;
+    case 'linesDown': dy += kout * 50; break;
+    case 'charsScatter': s *= 1 + kout * 0.4; rot += kout * 0.3; blur = kout * 8; break;
+    case 'zoomBlurOut': s *= 1 + kout * 2; blur = kout * 18; break;
+    case 'flipOut': sy *= Math.max(0.001, 1 - kout); rot += kout * 0.15; break;
+    case 'shrink': s *= Math.max(0.001, 1 - kout); break;
+    case 'neonFlickerOut': if (lout > 0) { const r = jit(4); if (lout >= 1 || r() < 0.6 * lout) alpha *= 0.08; } break;
+    // charsFade, wordsFade, typeBack: the plain fade-out of the envelope
   }
   const amt = Number(p.loopAmount ?? 1) * clamp(kin);
   switch (String(p.loop ?? 'none')) {
     case 'float': case 'wave': dy += Math.sin(f.t * 1.6) * 8 * amt; break;
     case 'pulse': s *= 1 + (Math.sin(f.t * 3.2) * 0.5 + 0.5) * 0.04 * amt; break;
     case 'jitter': { const r = rng(mix(f.seed + Math.floor(f.t * 12) * 31)); dx += (r() - 0.5) * 6 * amt; dy += (r() - 0.5) * 6 * amt; break; }
+    case 'bounce': dy -= Math.abs(Math.sin(f.t * 3.4)) * 10 * amt; break;
+    case 'sway': rot += Math.sin(f.t * 1.6) * 0.04 * amt; break;
+    case 'flicker': if (rng(mix(f.seed + Math.floor(f.t * 14) * 53))() < 0.07 * amt) alpha *= 0.3; break;
+    case 'breathe': s *= 1 + Math.sin(f.t * 1.3) * 0.03 * amt; break;
+    case 'rainbow': hue = (f.t * 80) % 360; break;
   }
   ctx.globalAlpha *= alpha;
-  if (blur > 0.2) ctx.filter = `blur(${blur.toFixed(1)}px)`;
-  ctx.translate(cx + dx, cy + dy); if (skew) ctx.transform(1, 0, skew, 1, 0, 0); ctx.scale(s * sx, s * sy); ctx.translate(-cx, -cy);
+  const fl = [blur > 0.2 ? `blur(${blur.toFixed(1)}px)` : '', hue ? `hue-rotate(${hue.toFixed(0)}deg)` : ''].filter(Boolean).join(' ');
+  if (fl) ctx.filter = fl;
+  ctx.translate(cx + dx, cy + dy); if (rot) ctx.rotate(rot); if (skew) ctx.transform(1, 0, skew, 1, 0, 0); ctx.scale(s * sx, s * sy); ctx.translate(-cx, -cy);
 }
 
 export const styleOf = (p: Props, sizeKey = 'size', colorKey = 'color'): TextStyle => ({

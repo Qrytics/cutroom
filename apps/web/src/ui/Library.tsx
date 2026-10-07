@@ -5,6 +5,7 @@ import { player } from '../lib/player.ts';
 import { useEditor } from '../lib/store.ts';
 import { loadFonts } from '../fonts.ts';
 import { addToTimeline, DND_TYPE, type LibItem } from './actions.ts';
+import { ToolButtons } from './CreateTools.tsx';
 
 type Tab = 'media' | 'graphics' | 'sounds';
 
@@ -90,6 +91,9 @@ function GraphicsTab() {
   for (const c of Object.values(COMPONENTS)) (groups.get(c.category) ?? groups.set(c.category, []).get(c.category)!).push(c);
   return (
     <>
+      <div className="group-label">Create your own</div>
+      <div className="create-tools"><ToolButtons /></div>
+      <p className="muted small">Pick a tool, then click or drag on the preview. Color, thickness and look are in the bar above the preview.</p>
       {[...groups].map(([cat, defs]) => (
         <div key={cat}>
           <div className="group-label">{cat}</div>

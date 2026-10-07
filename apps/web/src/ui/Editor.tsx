@@ -11,6 +11,7 @@ import { Inspector } from './Inspector.tsx';
 import { Timeline } from './Timeline.tsx';
 import { SidePanel } from './SidePanel.tsx';
 import { Toasts } from './Toasts.tsx';
+import { TOOL_KEYS } from './CreateTools.tsx';
 
 export function Editor({ projectId }: { projectId: string }) {
   const project = useEditor((s) => s.project);
@@ -73,7 +74,8 @@ export function Editor({ projectId }: { projectId: string }) {
       else if (k === 'm') s.edit([{ op: 'addMarker', t: st.time, label: `Marker ${Object.keys(st.project.markers).length + 1}` }]);
       else if (k === '=' || k === '+') st.set({ pxPerSec: Math.min(2000, st.pxPerSec * 1.25) });
       else if (k === '-') st.set({ pxPerSec: Math.max(4, st.pxPerSec / 1.25) });
-      else if (k === 'escape') st.set({ selection: [] });
+      else if (k === 'escape') st.set({ selection: [], tool: 'select' });
+      else if (!mod && !e.altKey && TOOL_KEYS[k]) st.set({ tool: TOOL_KEYS[k] });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);

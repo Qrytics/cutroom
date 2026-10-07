@@ -10,15 +10,20 @@ import { z } from 'zod';
 import { codeVersion } from '../../server/src/version.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
-const BASE = process.env.CUTROOM_URL || 'http://127.0.0.1:4317';
+const BASE = (process.env.CUTROOM_URL || 'http://127.0.0.1:4317').replace(/\/$/, '');
 const PACE = Number(process.env.CUTROOM_PACE ?? 250);
+// a team server somewhere else (set by `npm run setup -- --join <invite link>`): send the invite token, upload media,
+// download exports — and never try to start or restart that server from here
+const TOKEN = process.env.CUTROOM_TOKEN || '';
+const REMOTE = !/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(BASE);
+const auth = (): Record<string, string> => (TOKEN ? { authorization: `Bearer ${TOKEN}` } : {});
 
 type Json = Record<string, unknown>;
 
 async function call<T = Json>(p: string, init: RequestInit & { json?: unknown } = {}): Promise<T> {
   await ensureServer();
   const { json, ...rest } = init;
-  const r = await fetch(BASE + p, { ...rest, headers: json !== undefined ? { 'content-type': 'application/json' } : undefined, body: json !== undefined ? JSON.stringify(json) : rest.body });
+  const r = await fetch(BASE + p, { ...rest, headers: { ...auth(), ...(json !== undefined ? { 'content-type': 'application/json' } : {}) }, body: json !== undefined ? JSON.stringify(json) : rest.body });
   const ct = r.headers.get('content-type') || '';
   const body = ct.includes('json') ? await r.json() : Buffer.from(await r.arrayBuffer());
   if (!r.ok) throw new Error((body as { error?: string }).error || `HTTP ${r.status}`);
@@ -28,15 +33,20 @@ async function call<T = Json>(p: string, init: RequestInit & { json?: unknown } 
 let ready: Promise<void> | null = null;
 const LOCAL_CODE = codeVersion(ROOT);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function health(): Promise<{ code?: string; busy?: number } | null> {
+async function health(): Promise<{ code?: string; busy?: number; team?: boolean } | null> {
   try { const r = await fetch(`${BASE}/api/health`); return r.ok ? await r.json() : null; } catch { return null; }
 }
 /** Start the editor server in the background if it is not running — or replace it if it runs outdated code. */
 function ensureServer() {
   return (ready ??= (async () => {
     const h = await health();
-    const local = !process.env.CUTROOM_URL;
-    if (h && (!local || h.code === LOCAL_CODE || h.busy)) return;
+    if (REMOTE) {
+      if (h) return;
+      ready = null;
+      throw new Error(`can't reach the team's Cutroom server at ${BASE} — is the host's \`npm run team\` still running? (the quick-tunnel address changes each time it restarts; ask for a new invite and re-run setup with --join)`);
+    }
+    // a team-mode server serves other people right now: never restart it underneath them
+    if (h && (h.code === LOCAL_CODE || h.busy || h.team)) return;
     if (h) {
       // the running server predates the current code: save + stop it, then start a fresh one
       await fetch(`${BASE}/api/shutdown`, { method: 'POST' }).catch(() => {});
@@ -77,7 +87,10 @@ function ownerName() {
 }
 
 const text = (v: unknown) => ({ content: [{ type: 'text' as const, text: typeof v === 'string' ? v : JSON.stringify(v, null, 1) }] });
-const editorUrl = (id: string, who?: string) => `${BASE.replace('127.0.0.1', 'localhost')}/p/${id}${who ? `?name=${encodeURIComponent(who)}` : ''}`;
+const PUBLIC_BASE = BASE.replace('127.0.0.1', 'localhost');
+const editorUrl = (id: string, who?: string) => `${PUBLIC_BASE}/p/${id}${who ? `?name=${encodeURIComponent(who)}` : ''}`;
+/** Link that signs this browser into a remote team server first (sets the invite cookie), then opens the project. */
+const openUrl = (id: string, who: string) => (REMOTE && TOKEN ? `${PUBLIC_BASE}/join/${TOKEN}?next=${encodeURIComponent(`/p/${id}`)}&name=${encodeURIComponent(who)}` : editorUrl(id, who));
 
 function openBrowser(url: string) {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
@@ -150,7 +163,7 @@ server.registerTool('begin_editing', {
 }, async ({ project, task, open }) => {
   await call(`/api/projects/${project}/lock`, { method: 'POST', json: { holder: 'claude', holderName: 'Claude', task } });
   const url = editorUrl(project);
-  if (open) openBrowser(editorUrl(project, ownerName()));
+  if (open) openBrowser(openUrl(project, ownerName()));
   return text({ locked: true, url, note: open ? 'Opened the editor in the browser.' : 'Share this URL with the user.' });
 });
 
@@ -163,12 +176,23 @@ server.registerTool('finish_editing', {
 });
 
 server.registerTool('import_media', {
-  description: 'Import files from disk (video, audio, images, GIF, SVG) into the project media library. Returns media ids, durations, sizes. Non-web codecs are converted automatically.',
+  description: 'Import files from this computer (video, audio, images, GIF, SVG) into the project media library — works with a team server elsewhere too (the bytes are uploaded). Returns media ids, durations, sizes. Non-web codecs are converted automatically.',
   inputSchema: { project: z.string(), paths: z.array(z.string()).min(1) },
 }, async ({ project, paths }) => {
   const out = [];
   for (const p of paths) {
-    try { out.push(await call(`/api/projects/${project}/media`, { method: 'POST', json: { path: path.resolve(p.replace(/^~(?=\/)/, process.env.HOME || '~')) } })); }
+    const abs = path.resolve(p.replace(/^~(?=\/)/, process.env.HOME || '~'));
+    try {
+      if (!REMOTE) out.push(await call(`/api/projects/${project}/media`, { method: 'POST', json: { path: abs } }));
+      else {
+        // the server is on another machine: send the file's bytes
+        if (!fs.existsSync(abs)) throw new Error(`file not found: ${abs}`);
+        const form = new FormData();
+        form.append('file', await fs.openAsBlob(abs), path.basename(abs));
+        form.append('userId', 'claude'); form.append('userName', 'Claude');
+        out.push(await call(`/api/projects/${project}/media`, { method: 'POST', body: form }));
+      }
+    }
     catch (e) { out.push({ path: p, error: (e as Error).message }); }
   }
   return text(out.map((m) => ('error' in m ? m : { id: m.id, name: m.name, kind: m.kind, duration: m.duration, width: m.width, height: m.height, hasAudio: m.hasAudio })));
@@ -251,9 +275,20 @@ server.registerTool('export_video', {
     job = await call(`/api/jobs/${job.id}`);
   }
   if (job.status === 'error') throw new Error(job.error);
-  const url = job.file ? `${BASE.replace('127.0.0.1', 'localhost')}/exports/${encodeURIComponent(path.basename(job.file))}` : undefined;
-  if (open && job.file) openBrowser(job.file);
-  return text({ file: job.file, url, opened: !!(open && job.file), message: job.message });
+  const url = job.file ? `${PUBLIC_BASE}/exports/${encodeURIComponent(path.basename(job.file))}` : undefined;
+  let file = job.file;
+  if (REMOTE && url) {
+    // rendered on the team server — bring the file (and its .cutroom.json version) to this computer
+    const dir = process.env.CUTROOM_DOWNLOADS || path.join(os.homedir(), 'Downloads');
+    fs.mkdirSync(dir, { recursive: true });
+    file = path.join(dir, path.basename(job.file!));
+    for (const [src, dst] of [[url, file], [url.replace(/\.[^.]+$/, '.cutroom.json'), file.replace(/\.[^.]+$/, '.cutroom.json')]]) {
+      const r = await fetch(src, { headers: auth() });
+      if (r.ok) fs.writeFileSync(dst, Buffer.from(await r.arrayBuffer()));
+    }
+  }
+  if (open && file) openBrowser(file);
+  return text({ file, url, opened: !!(open && file), message: job.message, ...(REMOTE ? { note: 'rendered on the team server and downloaded to this computer' } : {}) });
 });
 
 server.registerTool('versions', {

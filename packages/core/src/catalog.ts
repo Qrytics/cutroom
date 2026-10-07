@@ -1,10 +1,10 @@
 // A compact, machine-generated description of everything Claude can place on the timeline.
 import { SFX } from './audio/synth.ts';
 import { COMPONENTS } from './components/index.ts';
-import { ANIM_IN, ANIM_OUT } from './components/draw.ts';
+import { ANIM_IN, ANIM_OUT, TEXT_LOOPS } from './components/draw.ts';
 import { EASES } from './engine/ease.ts';
 import { LOOKS } from './looks.ts';
-import { AUDIO_PROPS, EFFECT_PROPS, MEDIA_PROPS, TRANSFORM_PROPS, TRANSITION_PROPS, type PropDef } from './schema/props.ts';
+import { AUDIO_PROPS, EFFECT_PROPS, EMPHASIS_PROPS, MEDIA_PROPS, MOTION_PROPS, TRANSFORM_PROPS, TRANSITION_PROPS, type PropDef } from './schema/props.ts';
 
 const fmt = (d: PropDef) => {
   const range = d.options ? ` one of [${d.options.join('|')}]` : d.min !== undefined ? ` ${d.min}..${d.max}` : '';
@@ -24,10 +24,12 @@ export function catalog() {
       transform: TRANSFORM_PROPS.map(fmt).concat(['x/y default to the canvas center; anchor is relative to the full canvas box']),
       effects: EFFECT_PROPS.map(fmt),
       transitions: TRANSITION_PROPS.map(fmt),
+      motion: MOTION_PROPS.map(fmt).concat(['continuous camera-style motion on any visual clip']),
+      emphasis: EMPHASIS_PROPS.map(fmt).concat(['one-shot (or repeating) attention move on any visual clip at clip-local emphasisAt seconds']),
       media: MEDIA_PROPS.map(fmt),
       audio: AUDIO_PROPS.map(fmt),
     },
-    textAnimations: { in: ANIM_IN, out: ANIM_OUT },
+    textAnimations: { in: ANIM_IN, out: ANIM_OUT, loops: TEXT_LOOPS },
     eases: EASES,
     looks: LOOKS.map((l) => ({ key: l.key, name: l.name, vibe: l.vibe, note: l.note })),
   };

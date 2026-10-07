@@ -11,15 +11,19 @@ import * as Y from 'yjs';
 import { appendLog, applyOps, catalog, rollLook, CLAUDE, projectDuration, readProject, setLock, uid, type Author, type Op } from '@cutroom/core';
 import { analyzeAudio, beatsFromWav, detectScenes, importFile } from './media.ts';
 import { activeJobs, closeBrowser, contactSheet, frames, getJob, listJobs, PRESETS, setOrigin, startExport } from './render.ts';
-import { createProject, createSnapshot, deleteProject, EXPORTS, getRoom, listProjects, listSnapshots, MEDIA, project, readSnapshot, ROOT, saveAll } from './store.ts';
+import { createProject, createSnapshot, DATA, deleteProject, EXPORTS, getRoom, listProjects, listSnapshots, MEDIA, project, PROJECT_FILE_FORMAT, projectFile, type ProjectFile, readSnapshot, ROOT, saveAll } from './store.ts';
 import { handleConnection, presence } from './sync.ts';
 import { checkProject } from './check.ts';
 import { codeVersion } from './version.ts';
+import { authorized, initTeam, isLocalRequest, setPublicUrl, team, teamGate } from './team.ts';
 
 const PORT = Number(process.env.PORT || 4317);
 // localhost by default; `npm run team` (HOST=0.0.0.0) lets collaborators on your network join
 const HOST = process.env.HOST || '127.0.0.1';
 const app = express();
+initTeam(DATA);
+app.set('trust proxy', true);
+app.use(teamGate);
 app.use(express.json({ limit: '50mb' }));
 
 type H = (req: Request, res: Response) => Promise<unknown> | unknown;
@@ -47,7 +51,7 @@ function assertCanEdit(id: string, author: Author) {
 
 // ---------------------------------------------------------------- projects
 const CODE = codeVersion(ROOT);
-app.get('/api/health', h(() => ({ ok: true, name: 'cutroom', version: 1, code: CODE, pid: process.pid,
+app.get('/api/health', h(() => ({ ok: true, name: 'cutroom', version: 1, code: CODE, pid: process.pid, team: HOST !== '127.0.0.1' || !!team().publicUrl,
   busy: activeJobs() })));
 // used by the MCP to replace a server that runs outdated code (only when nothing is exporting)
 app.post('/api/shutdown', h(async (_req, res) => {
@@ -57,6 +61,16 @@ app.post('/api/shutdown', h(async (_req, res) => {
   setTimeout(() => process.exit(0), 100);
 }));
 app.get('/api/catalog', h(() => catalog()));
+
+// ---------------------------------------------------------------- team (host machine only)
+function invites() {
+  const t = team();
+  const lanIp = HOST === '0.0.0.0' ? Object.values(os.networkInterfaces()).flat().find((i) => i?.family === 'IPv4' && !i.internal)?.address : undefined;
+  return { token: t.token, lan: lanIp ? `http://${lanIp}:${PORT}/join/${t.token}` : undefined, public: t.publicUrl ? `${t.publicUrl.replace(/\/$/, '')}/join/${t.token}` : undefined };
+}
+const hostOnly = (req: Request) => { if (!isLocalRequest(req)) throw fail(403, 'only the host machine can do this'); };
+app.get('/api/team', h((req) => { hostOnly(req); return invites(); }));
+app.post('/api/team/public', h((req) => { hostOnly(req); setPublicUrl(req.body?.url || undefined); return invites(); }));
 // Roll an art direction; looks used by the most recent projects are avoided unless one is requested by key.
 app.get('/api/looks/roll', h((req) => {
   const recent = listProjects().slice(0, 6).map((p) => p.look).filter(Boolean) as string[];
@@ -104,7 +118,7 @@ app.post('/api/projects/:id/lock', h((req) => {
   const { holder = 'claude', holderName = 'Claude', task = 'Editing', force = false } = req.body || {};
   const cur = readProject(r.doc).lock;
   if (cur && cur.holder !== holder && !force) throw fail(409, `already locked by ${cur.holderName} ("${cur.task}")`);
-  if (holder === 'claude' && (!cur || cur.holder !== 'claude')) createSnapshot(req.params.id, `Before Claude: ${task}`, holder);
+  if (holder === 'claude' && (!cur || cur.holder !== 'claude')) createSnapshot(req.params.id, `Before Claude: ${task}`, holder, 'auto');
   setLock(r.doc, { holder, holderName, task, since: Date.now(), lastActivity: Date.now() });
   return { lock: readProject(r.doc).lock };
 }));
@@ -116,6 +130,8 @@ app.delete('/api/projects/:id/lock', h((req) => {
   if (cur && req.body?.summary) {
     r.doc.transact(() => appendLog(r.doc, { id: uid('log'), at: Date.now(), author: cur.holder, authorName: cur.holderName, summary: `✔ Finished: ${req.body.summary}` }), 'server');
   }
+  // what Claude delivered is kept as "Claude's original" — the version the editor's Restore button resets to
+  if (cur?.holder === 'claude') createSnapshot(req.params.id, `Claude's original — ${String(req.body?.summary || cur.task).slice(0, 120)}`, 'claude', 'original');
   setLock(r.doc, null);
   return { lock: null };
 }));
@@ -159,9 +175,42 @@ app.post('/api/projects/:id/snapshots/:sid/restore', h((req) => {
   const author = authorOf(req);
   assertCanEdit(req.params.id, author);
   const s = readSnapshot(req.params.id, req.params.sid);
-  createSnapshot(req.params.id, `Before restoring "${s.label}"`, author.id);
+  createSnapshot(req.params.id, `Before restoring "${s.label}"`, author.id, 'auto');
   applyOps(getRoom(req.params.id).doc, [{ op: 'replaceProject', project: s.project }], author);
   return { restored: s.label };
+}));
+
+// ---------------------------------------------------------------- project files
+app.get('/api/projects/:id/file', h((req, res) => {
+  const f = projectFile(req.params.id);
+  const name = `${f.name.replace(/[^\w-]+/g, '-').replace(/^-|-$/g, '') || 'video'}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '')}.cutroom.json`;
+  res.setHeader('content-disposition', `attachment; filename="${name}"`);
+  res.json(f);
+}));
+/** Restore a saved project file (from Export, or "Save to file"). Media it references that isn't in the library is re-imported from its source path. */
+app.post('/api/projects/:id/file', h(async (req) => {
+  const id = req.params.id;
+  const author = authorOf(req);
+  assertCanEdit(id, author);
+  const f = (typeof req.body?.file === 'string' ? JSON.parse(req.body.file) : req.body?.file) as ProjectFile;
+  if (f?.format !== PROJECT_FILE_FORMAT || !f.project?.clips) throw fail(400, 'that is not a Cutroom project file (.cutroom.json)');
+  const have = project(id).media;
+  const remap: Record<string, string> = {};
+  const missing: string[] = [];
+  for (const m of f.media ?? []) {
+    if (have[m.id]) continue;
+    const same = Object.values(have).find((x) => x.sourcePath && x.sourcePath === m.sourcePath);
+    if (same) { remap[m.id] = same.id; continue; }
+    if (m.sourcePath && fs.existsSync(m.sourcePath)) {
+      const media = await importFile(m.sourcePath, m.name);
+      applyOps(getRoom(id).doc, [{ op: 'addMedia', media }], author);
+      remap[m.id] = media.id;
+    } else missing.push(m.name);
+  }
+  const clips = Object.fromEntries(Object.entries(f.project.clips).map(([k, c]) => [k, c.mediaId && remap[c.mediaId] ? { ...c, mediaId: remap[c.mediaId] } : c]));
+  createSnapshot(id, `Before restoring file "${f.name}" (${f.savedAt?.slice(0, 16).replace('T', ' ')})`, author.id, 'auto');
+  applyOps(getRoom(id).doc, [{ op: 'replaceProject', project: { ...f.project, clips } }], author);
+  return { restored: f.name, savedAt: f.savedAt, missingMedia: missing };
 }));
 
 // ---------------------------------------------------------------- media
@@ -238,11 +287,12 @@ async function attachUi() {
     return;
   }
   const { createServer } = await import('vite');
-  const vite = await createServer({ root: webRoot, configFile: path.join(webRoot, 'vite.config.ts'), server: { middlewareMode: true, hmr: { server } }, appType: 'spa' });
+  const vite = await createServer({ root: webRoot, configFile: path.join(webRoot, 'vite.config.ts'), server: { middlewareMode: true, hmr: { server }, allowedHosts: true /* access is checked by teamGate, so tunnel/LAN hostnames are fine */ }, appType: 'spa' });
   app.use(vite.middlewares);
 }
 
 server.on('upgrade', (req, socket, head) => {
+  if (!authorized(req)) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return; }
   if (req.url?.startsWith('/yjs/')) wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
 });
 
@@ -253,8 +303,11 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
 });
 server.listen(PORT, HOST, () => {
   setOrigin(`http://127.0.0.1:${PORT}`);
-  const lan = HOST === '0.0.0.0' ? Object.values(os.networkInterfaces()).flat().find((i) => i?.family === 'IPv4' && !i.internal)?.address : undefined;
-  console.log(`cutroom  →  http://localhost:${PORT}${lan ? `   (team: http://${lan}:${PORT})` : '   (local only — use \`npm run team\` to let others join)'}`);
+  console.log(`cutroom  →  http://localhost:${PORT}`);
+  const inv = invites();
+  if (inv.lan) console.log(`team (same network)  →  ${inv.lan}`);
+  if (inv.public) console.log(`team (anywhere)      →  ${inv.public}`);
+  if (!inv.lan && !inv.public) console.log('(local only — `npm run team` lets others join; add -- --internet for people anywhere)');
 });
 
 const shutdown = async () => { saveAll(); await closeBrowser(); process.exit(0); };

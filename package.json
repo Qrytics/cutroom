@@ -12,7 +12,7 @@
     "mcp": "npm run -w @cutroom/mcp start",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "team": "HOST=0.0.0.0 npm run -w @cutroom/server start",
+    "team": "node scripts/team.mjs",
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/doctor.mjs",
     "postinstall": "node -e \"if(!process.env.CI)console.log('\\nCutroom: run `npm run setup` once to connect it to Claude Code.\\n')\""

@@ -7,6 +7,8 @@ import { clamp, rng } from '../engine/ease.ts';
 import { addInto, att, type Ctx, env, mono, mtof, out, type Out, panned, play, reverb, reverbWet, SR, type Stereo, stereo, SVF, svf, TAU } from './dsp.ts';
 import * as I from './instruments.ts';
 import { degNote, moodChords, MUSIC_MOODS, MUSIC_STYLES, musicGen, resolveStyle } from './music.ts';
+import { MORE_SFX } from './sfx2.ts';
+import { MORE3_SFX, SFX_REDESIGNS } from './sfx3.ts';
 
 export { SR } from './dsp.ts';
 export type { Stereo } from './dsp.ts';
@@ -447,7 +449,7 @@ function cityHum(c: Ctx, len: number, g: number) {
 export interface SfxDef {
   key: string;
   label: string;
-  category: 'Transitions' | 'UI' | 'Foley' | 'Impacts' | 'Tonal' | 'Stingers' | 'Music' | 'Texture';
+  category: 'Transitions' | 'UI' | 'Foley' | 'Impacts' | 'Tonal' | 'Stingers' | 'Music' | 'Texture' | 'Cartoon' | 'Sci-fi' | 'Nature' | 'Human';
   description: string;
   defaultDuration: number;
   /** true when the sound stretches to the clip length (risers, music); otherwise it is a one-shot */
@@ -553,6 +555,9 @@ export const SFX: Record<string, SfxDef> = Object.fromEntries([
   sfx('cityHum', 'City hum', 'Texture', 'Distant traffic and low city rumble with passing cars.', 10, true, (c, len) => cityHum(c, len, 0.6)),
   sfx('crowdCheer', 'Crowd cheer', 'Texture', 'Cheering crowd with claps and whistles that swells in.', 4, true, (c, len) => crowdCheer(c, len, 0.6)),
   sfx('drone', 'Drone', 'Texture', 'Evolving tension/ambient drone in a mood.', 10, true, (c, len, p) => drone(c, len, 0.7, String(p.mood ?? 'dark')), [moodProp('dark')]),
+  // second library (sfx2.ts)
+  ...MORE_SFX,
+  ...MORE3_SFX,
   // music
   sfx('music', 'Music bed', 'Music',
     'Procedural multi-genre music that fills the clip. `style` sets the genre/instruments (auto = picked from the mood by `variation`); `mood` sets key, scale and progressions; ' +
@@ -568,6 +573,8 @@ export const SFX: Record<string, SfxDef> = Object.fromEntries([
       { key: 'melody', label: 'Melody', type: 'bool', group: 'Sound', default: true },
     ]),
 ].map((d) => [d.key, d]));
+// redesigned presets keep their key, label and props (saved projects and looks keep working) but get a new sound
+for (const [k, r] of Object.entries(SFX_REDESIGNS)) if (SFX[k]) SFX[k] = { ...SFX[k], ...r };
 
 function resample(st: Stereo, rate: number): Stereo {
   if (rate === 1) return st;

@@ -1,5 +1,5 @@
 // Canvas helpers shared by components: text layout, per-word animation, shapes.
-import { clamp, ease, lerp, mixColor, rng, win } from '../engine/ease.ts';
+import { clamp, ease, lerp, mixColor, parseColor, rng, win } from '../engine/ease.ts';
 import type { Ease } from '../schema/types.ts';
 
 export type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -15,16 +15,25 @@ export interface FrameInfo {
 }
 
 export const ANIM_IN = ['none', 'fade', 'rise', 'drop', 'pop', 'slideLeft', 'slideRight', 'blurIn', 'typewriter', 'wordsUp', 'wordsPop', 'letters', 'scaleDown',
-  'charsUp', 'charsPop', 'scramble', 'maskUp', 'tracking', 'flipUp', 'skewIn', 'glitchIn', 'zoomBlur', 'stamp', 'splitIn', 'waveIn', 'elastic'];
+  'charsUp', 'charsPop', 'scramble', 'maskUp', 'tracking', 'flipUp', 'skewIn', 'glitchIn', 'zoomBlur', 'stamp', 'splitIn', 'waveIn', 'elastic',
+  'typewriterFade', 'charsFade', 'charsBlur', 'charsRotate', 'charsFlip', 'charsDrop', 'charsZoom', 'wordsRotate', 'wordsBlur', 'wordsSlideLeft', 'wordsSlideRight',
+  'linesUp', 'linesFade', 'spotlight', 'wave3d', 'shuffle', 'neonFlicker', 'cascade', 'unfold', 'highlightSweep'];
 export const ANIM_OUT = ['none', 'fade', 'sink', 'lift', 'pop', 'blurOut', 'slideLeft', 'slideRight', 'wordsDown',
-  'maskDown', 'scrambleOut', 'charsDown', 'zoomOut', 'flipDown', 'glitchOut', 'trackingOut', 'blink'];
+  'maskDown', 'scrambleOut', 'charsDown', 'zoomOut', 'flipDown', 'glitchOut', 'trackingOut', 'blink',
+  'charsFade', 'charsBlur', 'charsUp', 'charsScatter', 'wordsFade', 'wordsUp', 'linesDown', 'typeBack', 'zoomBlurOut', 'flipOut', 'neonFlickerOut', 'shrink'];
 /** continuous motion while the text is on screen */
-export const TEXT_LOOPS = ['none', 'float', 'wave', 'pulse', 'jitter', 'shimmer', 'glow'];
+export const TEXT_LOOPS = ['none', 'float', 'wave', 'pulse', 'jitter', 'shimmer', 'glow', 'bounce', 'sway', 'flicker', 'rainbow', 'breathe'];
 /** animations that move each character on its own (drawn char by char) */
-const CHAR_IN = ['letters', 'charsUp', 'charsPop', 'scramble', 'tracking', 'waveIn'];
-const CHAR_OUT = ['charsDown', 'scrambleOut', 'trackingOut'];
+const CHAR_IN = ['letters', 'charsUp', 'charsPop', 'scramble', 'tracking', 'waveIn', 'typewriterFade', 'charsFade', 'charsBlur', 'charsRotate', 'charsFlip',
+  'charsDrop', 'charsZoom', 'spotlight', 'wave3d', 'shuffle', 'neonFlicker', 'cascade', 'highlightSweep'];
+const CHAR_OUT = ['charsDown', 'scrambleOut', 'trackingOut', 'charsFade', 'charsBlur', 'charsUp', 'charsScatter', 'typeBack', 'neonFlickerOut'];
 /** animations staggered word by word */
-const WORD_IN = ['wordsUp', 'wordsPop', 'splitIn', 'flipUp', 'stamp', 'skewIn', 'elastic', 'glitchIn'];
+const WORD_IN = ['wordsUp', 'wordsPop', 'splitIn', 'flipUp', 'stamp', 'skewIn', 'elastic', 'glitchIn', 'wordsRotate', 'wordsBlur', 'wordsSlideLeft', 'wordsSlideRight', 'unfold'];
+const WORD_OUT = ['wordsDown', 'wordsFade', 'wordsUp'];
+/** animations staggered line by line */
+const LINE_IN = ['linesUp', 'linesFade'];
+const LINE_OUT = ['linesDown'];
+const CHAR_LOOPS = ['wave', 'jitter', 'rainbow'];
 /** integer hash, so neighbouring seeds (seed + frame step) give unrelated random streams */
 export const mix = (n: number) => { n = Math.imul(n ^ (n >>> 16), 0x45d9f3b); n = Math.imul(n ^ (n >>> 16), 0x45d9f3b); return (n ^ (n >>> 16)) >>> 0; };
 const GLYPHS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&*+=<>/?$@';
@@ -92,11 +101,12 @@ export interface AnimOpts {
   animIn: string; animOut: string; inDur: number; outDur: number; stagger: number; easeIn?: Ease; loop?: string; loopAmount?: number;
 }
 
-interface UnitState { alpha: number; dx: number; dy: number; scale: number; sy: number; skew: number; rot: number; blur: number; chars: number; scramble: boolean; mask: boolean }
+interface UnitState { alpha: number; dx: number; dy: number; scale: number; sx: number; sy: number; skew: number; rot: number; blur: number; chars: number; scramble: boolean; mask: boolean; tint: number; color: string | null }
 
 /** Animation state of one word or character at time t. `rel` = unit center x relative to its line center (for tracking). */
 function unitState(a: AnimOpts, f: FrameInfo, inDelay: number, outDelay: number, outStart: number, idx: number, rel: number, size: number, lh: number): UnitState {
-  const st: UnitState = { alpha: 1, dx: 0, dy: 0, scale: 1, sy: 1, skew: 0, rot: 0, blur: 0, chars: Infinity, scramble: false, mask: false };
+  const st: UnitState = { alpha: 1, dx: 0, dy: 0, scale: 1, sx: 1, sy: 1, skew: 0, rot: 0, blur: 0, chars: Infinity, scramble: false, mask: false, tint: 0, color: null };
+  const seeded = (salt: number) => rng(mix(f.seed + idx * 131 + salt));
   const k = win(f.t, inDelay, a.inDur, 'linear');
   const e = ease(a.easeIn ?? 'easeOut', k);
   const jit = (salt: number) => rng(mix(f.seed + idx * 131 + salt + Math.floor(f.t * 30) * 7919));
@@ -129,6 +139,26 @@ function unitState(a: AnimOpts, f: FrameInfo, inDelay: number, outDelay: number,
     case 'splitIn': st.alpha = e; st.dx = (idx % 2 ? 1 : -1) * (1 - ease('expoOut', k)) * 320; break;
     case 'waveIn': st.alpha = clamp(k * 2.5); st.dy = (1 - e) * size * 0.45 - Math.sin(k * Math.PI) * size * 0.25; break;
     case 'elastic': st.alpha = clamp(k * 3); st.scale = Math.max(0, ease('elasticOut', k)); break;
+    case 'typewriterFade': st.alpha = clamp(k * 1.6); break;
+    case 'charsFade': st.alpha = e; break;
+    case 'wordsBlur': st.alpha = e; st.blur = (1 - e) * 18; break;
+    case 'charsBlur': st.alpha = e; st.blur = (1 - e) * 14; break;
+    case 'charsRotate': st.alpha = e; st.rot = -(1 - e) * 1.3; st.dy = (1 - e) * size * 0.2; break;
+    case 'charsFlip': st.alpha = clamp(k * 2); st.sx = Math.max(0.001, ease('backOut', k)); break;
+    case 'charsDrop': st.alpha = e; st.dy = -(1 - e) * size * 0.8; break;
+    case 'charsZoom': st.alpha = e; st.scale = lerp(3, 1, e); break;
+    case 'wordsRotate': st.alpha = e; st.rot = (1 - e) * 0.5; st.dy = (1 - e) * 30; break;
+    case 'wordsSlideLeft': st.alpha = e; st.dx = (1 - e) * 120; break;
+    case 'wordsSlideRight': st.alpha = e; st.dx = -(1 - e) * 120; break;
+    case 'linesUp': st.alpha = e; st.dy = (1 - e) * lh * 0.6; break;
+    case 'linesFade': st.alpha = e; break;
+    case 'spotlight': st.alpha = 0.22 + 0.78 * e; st.tint = Math.sin(Math.PI * k) * 0.6; break;
+    case 'wave3d': st.alpha = clamp(k * 3); st.sy = Math.max(0.001, ease('backOut', k)); st.dy = -Math.sin(Math.PI * k) * size * 0.3; break;
+    case 'shuffle': { const r = seeded(5); const q = ease('quartOut', k); st.alpha = clamp(k * 3); st.dx = (r() - 0.5) * size * 6 * (1 - q); st.dy = (r() - 0.5) * size * 1.2 * (1 - q); break; }
+    case 'neonFlicker': if (k <= 0) st.alpha = 0; else if (k < 1) { const r = jit(3); st.alpha = r() < 0.55 * (1 - k) ? 0.08 : 1; st.tint = (1 - k) * 0.3; } break;
+    case 'cascade': st.alpha = clamp(k * 4); st.dy = -(1 - ease('bounceOut', k)) * size * 1.5; break;
+    case 'unfold': st.alpha = clamp(k * 3); st.sx = Math.max(0.001, ease('backOut', k)); break;
+    case 'highlightSweep': st.alpha = clamp(k * 4); st.tint = Math.sin(Math.PI * k); break;
   }
   if (a.animOut !== 'none' && f.t > outStart) {
     const lk = win(f.t, outStart + outDelay, a.outDur, 'linear'), ko = ease('easeIn', lk);
@@ -148,6 +178,16 @@ function unitState(a: AnimOpts, f: FrameInfo, inDelay: number, outDelay: number,
       case 'glitchOut': if (lk > 0) { const r = jit(2); st.dx += (r() - 0.5) * size * 0.8 * lk; st.dy += (r() - 0.5) * size * 0.15 * lk; st.alpha *= lk >= 1 ? 0 : r() < 0.5 * lk ? 0.1 : 1; } break;
       case 'trackingOut': st.alpha *= 1 - ko; st.dx += rel * ko * 0.8; break;
       case 'blink': st.alpha *= lk >= 1 ? 0 : Math.floor(lk * 8) % 2 === 0 ? 1 : 0; break;
+      case 'charsFade': case 'wordsFade': st.alpha *= 1 - ko; break;
+      case 'charsBlur': st.alpha *= 1 - ko; st.blur += ko * 14; break;
+      case 'charsUp': case 'wordsUp': st.alpha *= 1 - ko; st.dy -= ko * (a.animOut === 'wordsUp' ? 40 : size * 0.7); break;
+      case 'charsScatter': { const r = seeded(9); st.alpha *= 1 - ko; st.dx += (r() - 0.5) * size * 5 * ko; st.dy += (r() - 0.5) * size * 3 * ko; st.rot += (r() - 0.5) * 3 * ko; break; }
+      case 'linesDown': st.alpha *= 1 - ko; st.dy += ko * lh * 0.6; break;
+      case 'typeBack': if (lk > 0) st.alpha = 0; break;
+      case 'zoomBlurOut': st.alpha *= 1 - ko; st.scale *= 1 + ko * 2; st.blur += ko * 18; break;
+      case 'flipOut': st.alpha *= 1 - ko * 0.5; st.sy *= Math.max(0.001, 1 - ko); st.rot += ko * 0.2; break;
+      case 'neonFlickerOut': if (lk > 0) { const r = jit(4); st.alpha *= lk >= 1 ? 0 : r() < 0.6 * lk ? 0.08 : 1; } break;
+      case 'shrink': st.alpha *= 1 - ko * ko; st.scale *= Math.max(0.001, 1 - ko); break;
     }
   }
   // continuous loops, faded in as the entrance completes
@@ -157,6 +197,11 @@ function unitState(a: AnimOpts, f: FrameInfo, inDelay: number, outDelay: number,
     case 'wave': st.dy += Math.sin(f.t * 4 - idx * 0.45) * size * 0.07 * amt; break;
     case 'pulse': st.scale *= 1 + (Math.sin(f.t * 3.2) * 0.5 + 0.5) * 0.05 * amt; break;
     case 'jitter': { const r = rng(mix(f.seed + idx * 977 + Math.floor(f.t * 12) * 31)); st.dx += (r() - 0.5) * size * 0.04 * amt; st.dy += (r() - 0.5) * size * 0.04 * amt; st.rot += (r() - 0.5) * 0.06 * amt; break; }
+    case 'bounce': st.dy -= Math.abs(Math.sin(f.t * 3.4)) * size * 0.09 * amt; break;
+    case 'sway': st.rot += Math.sin(f.t * 1.6) * 0.06 * amt; break;
+    case 'flicker': { const r = rng(mix(f.seed + Math.floor(f.t * 14) * 53))(); if (r < 0.07 * amt) st.alpha *= 0.3; break; }
+    case 'breathe': st.scale *= 1 + Math.sin(f.t * 1.3) * 0.035 * amt; break;
+    case 'rainbow': st.color = `hsl(${((f.t * 80 + idx * 14) % 360).toFixed(0)} 90% 66%)`; break;
   }
   return st;
 }
@@ -174,19 +219,28 @@ export function drawText(ctx: Ctx, L: Layout, s: TextStyle, cx: number, cy: numb
   setSpacing(ctx, s.letterSpacing);
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'left';
-  const charMode = CHAR_IN.includes(a.animIn) || CHAR_OUT.includes(a.animOut) || a.loop === 'wave' || a.loop === 'jitter';
+  const charMode = CHAR_IN.includes(a.animIn) || CHAR_OUT.includes(a.animOut) || CHAR_LOOPS.includes(a.loop ?? '');
   const lh = s.size * s.lineHeight, nW = L.words.length, nC = Math.max(1, L.chars);
-  const inPer = CHAR_IN.includes(a.animIn) ? (a.animIn === 'tracking' ? 0 : a.stagger * (a.animIn === 'scramble' ? 0.5 : 0.35)) : WORD_IN.includes(a.animIn) ? a.stagger : 0;
-  const inByChar = CHAR_IN.includes(a.animIn);
-  const outPer = CHAR_OUT.includes(a.animOut) ? (a.animOut === 'trackingOut' ? 0 : a.stagger * 0.25) : a.animOut === 'wordsDown' ? a.stagger * 0.5 : 0;
-  const outByChar = CHAR_OUT.includes(a.animOut);
-  const outStart = f.duration - a.outDur - outPer * ((outByChar ? nC : nW) - 1);
+  const nL = L.lines.length;
+  const inPer = CHAR_IN.includes(a.animIn) ? (a.animIn === 'tracking' ? 0 : a.stagger * (a.animIn === 'scramble' ? 0.5 : 0.35)) : WORD_IN.includes(a.animIn) ? a.stagger : LINE_IN.includes(a.animIn) ? a.stagger * 3 : 0;
+  const inByChar = CHAR_IN.includes(a.animIn), inByLine = LINE_IN.includes(a.animIn);
+  const outPer = a.animOut === 'typeBack' ? a.outDur * 0.9 / nC : CHAR_OUT.includes(a.animOut) ? (a.animOut === 'trackingOut' ? 0 : a.stagger * 0.25)
+    : WORD_OUT.includes(a.animOut) ? a.stagger * 0.5 : LINE_OUT.includes(a.animOut) ? a.stagger * 2 : 0;
+  const outByChar = CHAR_OUT.includes(a.animOut), outByLine = LINE_OUT.includes(a.animOut);
+  // typeBack spends its out duration deleting characters, last first
+  const outStart = a.animOut === 'typeBack' ? f.duration - a.outDur : f.duration - a.outDur - outPer * ((outByChar ? nC : outByLine ? nL : nW) - 1);
+  /** out-stagger order: typeBack removes the last character first */
+  const outIdx = (ci: number, wi: number, li: number) => (a.animOut === 'typeBack' ? nC - 1 - ci : outByChar ? ci : outByLine ? li : wi);
   const lineLeft = (w: number) => (s.align === 'center' ? -w / 2 : s.align === 'right' ? -w : 0);
   let fill: string | CanvasGradient = s.color;
   if (d.gradient || a.loop === 'shimmer') {
     const g = ctx.createLinearGradient(cx + lineLeft(L.width), 0, cx + lineLeft(L.width) + L.width, 0);
     if (a.loop === 'shimmer') {
-      const base = d.gradient ? d.gradient[0] : s.color, hi = mixColor(base, '#ffffff', clamp(0.75 * (a.loopAmount ?? 1)));
+      let base = d.gradient ? d.gradient[0] : s.color;
+      const pc = parseColor(base);
+      // on near-white text a white band is invisible — sit the text a little lower so the sweep reads as a metallic glint
+      if (pc && (pc[0] + pc[1] + pc[2]) / 765 > 0.85) base = mixColor(base, '#8a8f99', clamp(0.35 * (a.loopAmount ?? 1)));
+      const hi = mixColor(base, '#ffffff', clamp(0.75 * (a.loopAmount ?? 1)) + 0.25);
       const pos = ((f.t * 0.45) % 1.8) - 0.4;
       [[0, base], [pos - 0.15, base], [pos, hi], [pos + 0.15, d.gradient ? d.gradient[1] : base], [1, d.gradient ? d.gradient[1] : base]]
         .forEach(([o, c]) => g.addColorStop(clamp(o as number), c as string));
@@ -199,10 +253,12 @@ export function drawText(ctx: Ctx, L: Layout, s: TextStyle, cx: number, cy: numb
     if (st.mask) { ctx.beginPath(); ctx.rect(-1e5, lineY - Math.max(lh, s.size * 1.25) / 2, 2e5, Math.max(lh, s.size * 1.25)); ctx.clip(); }
     ctx.globalAlpha *= st.alpha;
     if (st.blur > 0.2) ctx.filter = `blur(${st.blur.toFixed(1)}px)`;
-    if (st.scale !== 1 || st.sy !== 1 || st.skew || st.rot) {
+    if (st.scale !== 1 || st.sx !== 1 || st.sy !== 1 || st.skew || st.rot) {
       const ox = x + w / 2, oy = y;
-      ctx.translate(ox, oy); if (st.rot) ctx.rotate(st.rot); if (st.skew) ctx.transform(1, 0, st.skew, 1, 0, 0); ctx.scale(st.scale, st.scale * st.sy); ctx.translate(-ox, -oy);
+      ctx.translate(ox, oy); if (st.rot) ctx.rotate(st.rot); if (st.skew) ctx.transform(1, 0, st.skew, 1, 0, 0); ctx.scale(st.scale * st.sx, st.scale * st.sy); ctx.translate(-ox, -oy);
     }
+    if (st.color) color = st.color;
+    else if (st.tint > 0.01 && typeof color === 'string') color = mixColor(color, '#ffffff', clamp(st.tint));
     if (glow) { ctx.shadowColor = s.color; ctx.shadowBlur = glow; }
     else if (d.shadow) { ctx.shadowColor = d.shadowColor || 'rgba(0,0,0,0.6)'; ctx.shadowBlur = d.shadow; ctx.shadowOffsetY = d.shadow / 3; }
     if (d.stroke && d.strokeWidth) { ctx.lineJoin = 'round'; ctx.strokeStyle = d.stroke; ctx.lineWidth = d.strokeWidth * 2; ctx.strokeText(txt, x, y); }
@@ -219,7 +275,7 @@ export function drawText(ctx: Ctx, L: Layout, s: TextStyle, cx: number, cy: numb
     const shown = clamp(typeShown - w.charStart, 0, w.text.length);
     if (shown <= 0) { if (a.animIn === 'typewriter' && !caret) caret = { x: cx + w.x, y: lineY }; continue; }
     if (!charMode) {
-      const st = unitState(a, f, w.index * inPer, w.index * outPer, outStart, w.index, w.x + w.w / 2 - lineMid, s.size, lh);
+      const st = unitState(a, f, (inByLine ? w.line : w.index) * inPer, outIdx(w.charStart, w.index, w.line) * outPer, outStart, w.index, w.x + w.w / 2 - lineMid, s.size, lh);
       if (st.alpha <= 0.001) continue;
       const txt = shown < w.text.length ? w.text.slice(0, shown) : w.text;
       const wx = cx + w.x + st.dx, wy = lineY + st.dy;
@@ -230,7 +286,7 @@ export function drawText(ctx: Ctx, L: Layout, s: TextStyle, cx: number, cy: numb
     for (let j = 0; j < shown; j++) {
       const ci = w.charStart + j, ch = w.text[j];
       const x0 = ctx.measureText(w.text.slice(0, j)).width, cw = ctx.measureText(ch).width;
-      const st = unitState(a, f, (inByChar ? ci : w.index) * inPer, (outByChar ? ci : w.index) * outPer, outStart, inByChar || a.loop === 'wave' || a.loop === 'jitter' ? ci : w.index, w.x + x0 + cw / 2 - lineMid, s.size, lh);
+      const st = unitState(a, f, (inByChar ? ci : inByLine ? w.line : w.index) * inPer, outIdx(ci, w.index, w.line) * outPer, outStart, inByChar || CHAR_LOOPS.includes(a.loop ?? '') || outByChar ? ci : w.index, w.x + x0 + cw / 2 - lineMid, s.size, lh);
       if (st.alpha <= 0.001) continue;
       const g = st.scramble && ch.trim() ? GLYPHS[Math.floor(rng(mix(f.seed + ci * 131 + Math.floor(f.t * 20) * 7))() * GLYPHS.length)] : ch;
       drawUnit(g, cx + w.x + x0 + st.dx, lineY + st.dy, cw, st, lineY, color);
