@@ -116,16 +116,42 @@ export class LiveMixer {
   }
 }
 
-/** Offline mix of [from, to) → 16-bit WAV, base64 (used by the exporter). */
-export async function renderMix(project: Project, from: number, to: number) {
+/** Offline mix of [from, to) through the master limiter, then a soft ceiling so stacked hits can never clip. */
+async function mixdown(project: Project, from: number, to: number): Promise<[Float32Array, Float32Array]> {
   const len = Math.max(1, Math.ceil((to - from) * SR));
   const ctx = new OfflineAudioContext({ numberOfChannels: 2, length: len, sampleRate: SR });
   const limiter = new DynamicsCompressorNode(ctx, { threshold: -3, knee: 2, ratio: 20, attack: 0.002, release: 0.1 });
   limiter.connect(ctx.destination);
   await schedule(ctx, project, from, 0, limiter, to);
   const out = await ctx.startRendering();
-  const wav = encodeWav([out.getChannelData(0), out.getChannelData(1)]);
+  const ch: [Float32Array, Float32Array] = [out.getChannelData(0), out.getChannelData(1)];
+  // the compressor lets fast transients through; bend anything above -2 dBFS smoothly towards a -1 dBFS ceiling
+  const knee = 0.794, ceil = 0.891, room = ceil - knee;
+  for (const c of ch) for (let i = 0; i < c.length; i++) {
+    const a = Math.abs(c[i]);
+    if (a > knee) c[i] = Math.sign(c[i]) * (knee + room * Math.tanh((a - knee) / room));
+  }
+  return ch;
+}
+
+/** Offline mix of [from, to) → 16-bit WAV, base64 (used by the exporter). */
+export async function renderMix(project: Project, from: number, to: number) {
+  const wav = encodeWav(await mixdown(project, from, to));
   let s = '';
   for (let i = 0; i < wav.length; i += 0x8000) s += String.fromCharCode(...wav.subarray(i, i + 0x8000));
   return btoa(s);
+}
+
+/** Per-second peak / RMS (dBFS) of the final mix — lets Claude check the sound without listening. */
+export async function mixStats(project: Project, from: number, to: number) {
+  const [l, r] = await mixdown(project, from, to);
+  const db = (x: number) => (x > 1e-6 ? +(20 * Math.log10(x)).toFixed(1) : -120);
+  const out: { t: number; peak: number; rms: number }[] = [];
+  for (let s0 = 0; s0 < l.length; s0 += SR) {
+    let pk = 0, sum = 0;
+    const e = Math.min(l.length, s0 + SR);
+    for (let i = s0; i < e; i++) { pk = Math.max(pk, Math.abs(l[i]), Math.abs(r[i])); sum += (l[i] * l[i] + r[i] * r[i]) / 2; }
+    out.push({ t: +(from + s0 / SR).toFixed(2), peak: db(pk), rms: db(Math.sqrt(sum / Math.max(1, e - s0))) });
+  }
+  return out;
 }

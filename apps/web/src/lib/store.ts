@@ -14,6 +14,9 @@ export function loadMe(): Me {
   let me: Author | null = null;
   try { me = JSON.parse(localStorage.getItem('cutroom.me') || 'null'); } catch { /* storage unavailable */ }
   if (!me?.id) me = { id: `u${Math.random().toString(36).slice(2, 9)}`, name: '' };
+  // links opened by Claude carry ?name=<the user's name> so the first visit goes straight into the editor
+  const fromUrl = new URLSearchParams(location.search).get('name')?.trim();
+  if (!me.name && fromUrl) { me = { ...me, name: fromUrl.slice(0, 40) }; saveMe(me); }
   return { ...me, color: colorFor(me.id) };
 }
 export function saveMe(me: Author) {

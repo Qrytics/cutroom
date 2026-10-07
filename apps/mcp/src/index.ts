@@ -1,11 +1,13 @@
 // Cutroom MCP server: the tools Claude uses to build videos in the shared editor.
 // Every edit goes through the server's ops API, so it appears live in every open editor and stays editable.
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import { codeVersion } from '../../server/src/version.ts';
 
 const ROOT = path.resolve(import.meta.dirname, '../../..');
 const BASE = process.env.CUTROOM_URL || 'http://127.0.0.1:4317';
@@ -24,24 +26,58 @@ async function call<T = Json>(p: string, init: RequestInit & { json?: unknown } 
 }
 
 let ready: Promise<void> | null = null;
-/** Start the editor server in the background if it is not running yet. */
+const LOCAL_CODE = codeVersion(ROOT);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+async function health(): Promise<{ code?: string; busy?: number } | null> {
+  try { const r = await fetch(`${BASE}/api/health`); return r.ok ? await r.json() : null; } catch { return null; }
+}
+/** Start the editor server in the background if it is not running — or replace it if it runs outdated code. */
 function ensureServer() {
   return (ready ??= (async () => {
-    const up = async () => { try { return (await fetch(`${BASE}/api/health`)).ok; } catch { return false; } };
-    if (await up()) return;
+    const h = await health();
+    const local = !process.env.CUTROOM_URL;
+    if (h && (!local || h.code === LOCAL_CODE || h.busy)) return;
+    if (h) {
+      // the running server predates the current code: save + stop it, then start a fresh one
+      await fetch(`${BASE}/api/shutdown`, { method: 'POST' }).catch(() => {});
+      for (let i = 0; i < 20 && (await health()); i++) await sleep(250);
+      // servers older than /api/shutdown: SIGTERM (it saves every project first) — only if it really is Cutroom
+      if (await health()) stopCutroomOnPort(Number(new URL(BASE).port || 4317));
+      for (let i = 0; i < 40 && (await health()); i++) await sleep(250);
+      if (await health()) throw new Error(`an outdated Cutroom server is running on ${BASE} and would not stop — stop it (Ctrl+C in its terminal) and try again`);
+    }
     fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true });
     const log = fs.openSync(path.join(ROOT, 'data', 'server.log'), 'a');
     const tsx = path.join(ROOT, 'node_modules', '.bin', 'tsx');
     const child = spawn(tsx, ['apps/server/src/index.ts'], { cwd: ROOT, detached: true, stdio: ['ignore', log, log], env: process.env });
     child.unref();
-    for (let i = 0; i < 120; i++) { if (await up()) return; await new Promise((r) => setTimeout(r, 250)); }
+    for (let i = 0; i < 160; i++) { if (await health()) return; await sleep(250); }
     ready = null;
-    throw new Error(`Cutroom server did not start — see ${path.join(ROOT, 'data', 'server.log')}`);
+    throw new Error(`Cutroom server did not start — see ${path.join(ROOT, 'data', 'server.log')} (try: cd ${ROOT} && npm run doctor)`);
   })());
 }
 
+function stopCutroomOnPort(port: number) {
+  if (process.platform === 'win32') return;
+  try {
+    const pids = execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').filter(Boolean).map(Number);
+    for (const pid of pids) {
+      const cmd = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8' });
+      // `npm start` runs "tsx src/index.ts" inside apps/server, the MCP runs "tsx apps/server/src/index.ts" from the root
+      const cwd = execFileSync('lsof', ['-a', '-p', String(pid), '-d', 'cwd', '-Fn'], { encoding: 'utf8' }).split('\n').find((l) => l.startsWith('n'))?.slice(1) ?? '';
+      const ours = cwd === ROOT || cwd === path.join(ROOT, 'apps', 'server');
+      if (ours && /tsx/.test(cmd) && /(apps\/server\/)?src\/index\.ts/.test(cmd)) process.kill(pid, 'SIGTERM');
+    }
+  } catch { /* lsof missing or nothing listening */ }
+}
+
+/** Name shown for the human in the editor (so the first open goes straight in, no name prompt). */
+function ownerName() {
+  try { return execFileSync('git', ['config', 'user.name'], { encoding: 'utf8' }).trim() || os.userInfo().username; } catch { return os.userInfo().username; }
+}
+
 const text = (v: unknown) => ({ content: [{ type: 'text' as const, text: typeof v === 'string' ? v : JSON.stringify(v, null, 1) }] });
-const editorUrl = (id: string) => `${BASE.replace('127.0.0.1', 'localhost')}/p/${id}`;
+const editorUrl = (id: string, who?: string) => `${BASE.replace('127.0.0.1', 'localhost')}/p/${id}${who ? `?name=${encodeURIComponent(who)}` : ''}`;
 
 function openBrowser(url: string) {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
@@ -50,7 +86,8 @@ function openBrowser(url: string) {
 
 const server = new McpServer({ name: 'cutroom', version: '0.1.0' }, {
   instructions: 'Cutroom is a collaborative video editor. Build videos by applying edit ops to a project while the user watches live. ' +
-    'Always: begin_editing → (import_media, edit, screenshot to check) → finish_editing. Read the video-editor skill for the full workflow.',
+    'Always: design_direction → begin_editing → (import_media, edit — fix every ⚠ it returns, check — fix every ✖) → export_video → finish_editing. ' +
+    '`check` is text-only and works in every client; screenshots are optional. Read the video-editor skill for the full workflow.',
 });
 
 server.registerTool('list_projects', { description: 'List Cutroom projects (newest first).', inputSchema: {} },
@@ -70,9 +107,27 @@ server.registerTool('get_project', {
 }, async ({ project }) => text(await call(`/api/projects/${project}/summary`)));
 
 server.registerTool('catalog', {
-  description: 'Everything you can place: motion-graphics components (with every prop and default), synthesized sound presets, shared transform/effect/transition/audio props, text animations, easings. Call once per session before building.',
-  inputSchema: {},
-}, async () => text(await call('/api/catalog')));
+  description: 'Everything you can place: motion-graphics components (with every prop and default), synthesized sound presets, shared transform/effect/transition/audio/motion props, text animations, easings, looks. ' +
+    'Start with section:"index" (one line per component/sfx/look), then fetch full prop lists with `keys` for just the ones you will use.',
+  inputSchema: {
+    keys: z.array(z.string()).optional().describe('component or sfx keys, e.g. ["title","kineticType","whoosh","music"] — returns their full props plus the shared props'),
+    section: z.enum(['index', 'components', 'sfx', 'sharedProps', 'textAnimations', 'eases', 'looks']).optional().describe('"index" = key + description of everything (small)'),
+  },
+}, async ({ keys, section }) => {
+  type Entry = Record<string, unknown> & { key: string; description?: string; name?: string };
+  const c = await call<Record<string, unknown> & { components: Entry[]; sfx: Entry[]; looks: Entry[] }>('/api/catalog');
+  if (keys?.length) {
+    const want = new Set(keys);
+    const components = c.components.filter((x) => want.has(x.key)), sfx = c.sfx.filter((x) => want.has(x.key));
+    const unknown = keys.filter((k) => !components.some((x) => x.key === k) && !sfx.some((x) => x.key === k));
+    return text({ components, sfx, ...(unknown.length ? { unknown } : {}), sharedProps: c.sharedProps, textAnimations: c.textAnimations, eases: c.eases });
+  }
+  if (section === 'index') {
+    const brief = (x: Entry) => `${x.key} — ${x.description}`;
+    return text({ components: c.components.map(brief), sfx: c.sfx.map(brief), looks: c.looks.map((l) => `${l.key} — ${l.name}`), textAnimations: c.textAnimations, eases: c.eases });
+  }
+  return text(section ? { [section]: c[section] } : c);
+});
 
 server.registerTool('design_direction', {
   description: 'Roll a fresh art direction (look) for a new video: palette, font pairing, shading, texture, background, text/transition/camera motion, ' +
@@ -95,7 +150,7 @@ server.registerTool('begin_editing', {
 }, async ({ project, task, open }) => {
   await call(`/api/projects/${project}/lock`, { method: 'POST', json: { holder: 'claude', holderName: 'Claude', task } });
   const url = editorUrl(project);
-  if (open) openBrowser(url);
+  if (open) openBrowser(editorUrl(project, ownerName()));
   return text({ locked: true, url, note: open ? 'Opened the editor in the browser.' : 'Share this URL with the user.' });
 });
 
@@ -146,12 +201,15 @@ server.registerTool('edit', {
     pace: z.number().optional().describe(`ms between ops so the user can watch (default ${PACE}; 0 = instant)`),
   },
 }, async ({ project, ops, pace }) => {
-  const r = await call<{ results: { op: string; id?: string; summary: string }[] }>(`/api/projects/${project}/ops`, { method: 'POST', json: { ops, pace: pace ?? PACE } });
-  return text(r.results.map((x) => (x.id ? `${x.id}: ${x.summary}` : x.summary)).join('\n'));
+  const r = await call<{ results: { op: string; id?: string; summary: string; warnings?: string[] }[] }>(`/api/projects/${project}/ops`, { method: 'POST', json: { ops, pace: pace ?? PACE } });
+  const warnings = r.results.flatMap((x) => x.warnings ?? []);
+  const lines = r.results.map((x) => (x.id ? `${x.id}: ${x.summary}` : x.summary));
+  return text([`${r.results.length} ops applied.`, ...lines, ...(warnings.length ? ['', `⚠ ${warnings.length} warning(s) — fix these with setProps/updateClip:`, ...warnings.map((w) => `⚠ ${w}`)] : [])].join('\n'));
 });
 
 server.registerTool('screenshot', {
-  description: 'Render frames exactly as the export will look, so you can check your work (text fits, nothing overlaps, safe areas, timing). Pass several times to check animation states.',
+  description: 'Render frames exactly as the export will look and return them as images. Run `check` first (text report, works in every client). ' +
+    'If an image response errors (some API gateways reject images), do not retry — rely on `check`.',
   inputSchema: { project: z.string(), times: z.array(z.number()).min(1).max(8), scale: z.number().min(0.1).max(1).default(0.5) },
 }, async ({ project, times, scale }) => {
   const content: ({ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string })[] = [];
@@ -163,7 +221,7 @@ server.registerTool('screenshot', {
 });
 
 server.registerTool('contact_sheet', {
-  description: 'One image with a grid of frames across the whole video (default 12 evenly spaced) — fast overall review of pacing and look.',
+  description: 'One image with a grid of frames across the whole video (default 12 evenly spaced). Image output — if images fail in this client, use `check` and do not retry.',
   inputSchema: { project: z.string(), times: z.array(z.number()).optional(), cols: z.number().int().default(4) },
 }, async ({ project, times, cols }) => {
   const q = times?.length ? `times=${times.join(',')}&` : '';
@@ -171,17 +229,31 @@ server.registerTool('contact_sheet', {
   return { content: [{ type: 'image' as const, data: Buffer.from(buf).toString('base64'), mimeType: 'image/jpeg' }] };
 });
 
+server.registerTool('check', {
+  description: 'Text-only QA of the video through the real compositor — run it after each scene and before exporting. Reports, with clip ids and times: ' +
+    'text cut off at a frame edge or outside title-safe, text layers overlapping each other, low text contrast, images/videos that draw nothing (not loaded / off-frame), ' +
+    'flat empty frames, Reels UI-zone intrusions, unknown props / bad option values / out-of-range values / keyframes outside clips, text too fast to read, ' +
+    'audio clipping and silent gaps — plus each sampled frame\'s visible layers with pixel bounding boxes. Fix every ✖ and the ⚠ that matter, then re-run.',
+  inputSchema: {
+    project: z.string(),
+    times: z.array(z.number()).optional().describe('timeline seconds to inspect; default = every 2 s + each text clip once it has settled'),
+    audio: z.boolean().default(true).describe('also analyze the final mix (peaks / silence); set false for a faster visual-only pass'),
+  },
+}, async ({ project, times, audio }) => text((await call<{ text: string }>(`/api/projects/${project}/check`, { method: 'POST', json: { times, audio } })).text));
+
 server.registerTool('export_video', {
-  description: 'Render the final video file. Presets: mp4 (default, H.264), draft (half-size, fast), webm, prores, gif. Waits for completion and returns the file path.',
-  inputSchema: { project: z.string(), preset: z.string().default('mp4'), from: z.number().optional(), to: z.number().optional() },
-}, async ({ project, preset, from, to }) => {
+  description: 'Render the final video file. Presets: mp4 (default, H.264), draft (half-size, fast), webm, prores, gif. Waits for completion, then (by default) opens it so the user can watch. Returns the file path and a browser URL.',
+  inputSchema: { project: z.string(), preset: z.string().default('mp4'), from: z.number().optional(), to: z.number().optional(), open: z.boolean().default(true).describe('play it for the user when done') },
+}, async ({ project, preset, from, to, open }) => {
   let job = await call<{ id: string; status: string; file?: string; error?: string; message: string }>(`/api/projects/${project}/export`, { method: 'POST', json: { preset, range: from !== undefined || to !== undefined ? { from, to } : undefined } });
   while (job.status !== 'done' && job.status !== 'error') {
-    await new Promise((r) => setTimeout(r, 1500));
+    await sleep(1500);
     job = await call(`/api/jobs/${job.id}`);
   }
   if (job.status === 'error') throw new Error(job.error);
-  return text({ file: job.file, message: job.message });
+  const url = job.file ? `${BASE.replace('127.0.0.1', 'localhost')}/exports/${encodeURIComponent(path.basename(job.file))}` : undefined;
+  if (open && job.file) openBrowser(job.file);
+  return text({ file: job.file, url, opened: !!(open && job.file), message: job.message });
 });
 
 server.registerTool('versions', {

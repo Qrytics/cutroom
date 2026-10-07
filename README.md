@@ -33,15 +33,14 @@ headless renderer uses Playwright's Chromium.
 git clone https://github.com/Qrytics/cutroom.git ~/gitProjects/cutroom
 cd ~/gitProjects/cutroom
 npm install
-npx playwright install chromium   # headless renderer for screenshots and export
-npm start                         # → http://localhost:4317 (this machine only)
+npm run setup     # once: ffmpeg, headless Chromium, registers the `cutroom` MCP server + installs the skill
+npm run doctor    # end-to-end self-test through the MCP server (project → edits → check → export), prints fixes
 ```
 
-If npm blocked install scripts (`npm install-scripts ls`), approve the two that matter:
-
-```bash
-npm install-scripts approve esbuild ffmpeg-static
-```
+`setup` is safe to re-run; it only fixes what's missing (including approving the `esbuild`/`ffmpeg-static` install
+scripts that newer npm versions block). Restart any open Claude Code session afterwards so it loads the tools.
+You don't need to start the server yourself: the MCP tools start it and replace it automatically when its code is
+outdated. To use the editor without Claude: `npm start` → http://localhost:4317.
 
 To let collaborators on your network join the same session:
 
@@ -55,14 +54,12 @@ Projects, media, versions and exports live in `data/` (git-ignored).
 
 ### Connect once
 
+`npm run setup` does this for you. By hand it is:
+
 ```bash
-# the MCP server (the tools Claude calls)
 claude mcp add -s user cutroom -- ~/gitProjects/cutroom/node_modules/.bin/tsx ~/gitProjects/cutroom/apps/mcp/src/index.ts
-# the skill (the workflow + taste rules Claude follows)
 ln -s ~/gitProjects/cutroom/skill/video-editor ~/.claude/skills/video-editor
 ```
-
-The MCP tools start the editor server in the background if it isn't running (log: `data/server.log`).
 
 ### Then ask, from any project
 
@@ -78,8 +75,9 @@ What happens:
    else is view-only but can play, scrub and inspect.
 3. **Live build.** Claude builds scene by scene through `edit` calls. Each op lands live (paced so you can follow),
    with the changed clip highlighted and the playhead following along.
-4. **Self-check.** Claude renders `screenshot`s and a `contact_sheet` exactly as the export will look, and fixes
-   overlaps, contrast and timing.
+4. **Self-check.** Claude runs `check`, a text-only QA pass through the real renderer. It reports text cut off at
+   the frame edge, overlapping text, low contrast, media that fails to draw, Reels UI-zone intrusions, bad props and
+   audio clipping, each with clip ids and times. Claude fixes them before exporting; no image support is needed.
 5. **Hand-off.** `finish_editing` releases the lock with a summary. You can now change anything, and Claude can export
    (`export_video`) or keep iterating on the same project later.
 
@@ -93,9 +91,10 @@ What happens:
 | `begin_editing` / `finish_editing` | Take / release the edit lock (snapshot + browser open on begin) |
 | `import_media` | Import video/audio/images/GIF/SVG from disk; non-web codecs are transcoded |
 | `analyze_media` | Silences (cut dead air), loudness, beat grid (cut on the beat), scene cuts |
-| `edit` | Apply a batch of edit ops (atomic, validated, paced for viewers) |
-| `screenshot` / `contact_sheet` | Render exact frames / a grid across the whole video |
-| `export_video` | Render mp4 / draft / webm / prores / gif and return the file path |
+| `edit` | Apply a batch of edit ops (atomic, validated, paced for viewers); returns warnings for unknown props, bad options, out-of-range values, keyframes outside clips and hidden overlaps |
+| `check` | Text-only QA: cut-off/overlapping/low-contrast text, empty media, safe zones, prop mistakes, audio peaks & silence, per-layer pixel bounds |
+| `screenshot` / `contact_sheet` | Render exact frames / a grid across the whole video (image output; optional) |
+| `export_video` | Render mp4 / draft / webm / prores / gif, open it for the user, return the path and a URL |
 | `versions` | List or restore saved versions |
 
 ### Edit ops
@@ -317,6 +316,8 @@ npm test                                # vitest: ops, engine, audio (every pres
 npm run typecheck
 npx tsx scripts/check-components.ts     # renders every component; prints ink/motion stats + draw errors
 npx tsx scripts/check-variants.ts       # renders every animation/transition/motion/style value (-v for all)
+node scripts/check-looks.mjs            # builds a scene from every look's recipes and runs `check` on it
+npm run doctor                          # end-to-end through the MCP server (add -- --quick to skip the export)
 (cd apps/web && npx vite build)         # production bundle
 ```
 
@@ -333,8 +334,12 @@ npx tsx scripts/check-variants.ts       # renders every animation/transition/mot
 
 ## Troubleshooting
 
-- **Claude doesn't see the `cutroom` tools**: re-run the `claude mcp add` command above, then restart Claude Code.
+Run `npm run doctor` first. It tests every step Claude uses and prints the fix for anything that fails.
+
+- **Claude doesn't see the `cutroom` tools**: run `npm run setup`, then restart Claude Code.
+- **The editor says "Connecting to project…"**: after 6 s it tells you why (missing project, sync not connected, or
+  server down) and offers Retry.
 - **Server won't start**: check `data/server.log`. Port 4317 may be taken; set `PORT`.
-- **Screenshots or export fail**: run `npx playwright install chromium`.
-- **ffmpeg errors on import**: run `npm install-scripts approve ffmpeg-static`, then `npm rebuild ffmpeg-static`.
-- **Text renders in the wrong font**: fonts load before first paint; hard-refresh the editor after adding new ones.
+- **Screenshots fail in your client** (some gateways reject images): nothing depends on them; `check` covers the
+  same ground in text.
+- **ffmpeg / Chromium missing**: `npm run setup` reinstalls them.

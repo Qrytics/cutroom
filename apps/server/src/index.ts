@@ -10,9 +10,11 @@ import { WebSocketServer } from 'ws';
 import * as Y from 'yjs';
 import { appendLog, applyOps, catalog, rollLook, CLAUDE, projectDuration, readProject, setLock, uid, type Author, type Op } from '@cutroom/core';
 import { analyzeAudio, beatsFromWav, detectScenes, importFile } from './media.ts';
-import { closeBrowser, contactSheet, frames, getJob, listJobs, PRESETS, setOrigin, startExport } from './render.ts';
+import { activeJobs, closeBrowser, contactSheet, frames, getJob, listJobs, PRESETS, setOrigin, startExport } from './render.ts';
 import { createProject, createSnapshot, deleteProject, EXPORTS, getRoom, listProjects, listSnapshots, MEDIA, project, readSnapshot, ROOT, saveAll } from './store.ts';
 import { handleConnection, presence } from './sync.ts';
+import { checkProject } from './check.ts';
+import { codeVersion } from './version.ts';
 
 const PORT = Number(process.env.PORT || 4317);
 // localhost by default; `npm run team` (HOST=0.0.0.0) lets collaborators on your network join
@@ -44,7 +46,16 @@ function assertCanEdit(id: string, author: Author) {
 }
 
 // ---------------------------------------------------------------- projects
-app.get('/api/health', h(() => ({ ok: true, name: 'cutroom', version: 1 })));
+const CODE = codeVersion(ROOT);
+app.get('/api/health', h(() => ({ ok: true, name: 'cutroom', version: 1, code: CODE, pid: process.pid,
+  busy: activeJobs() })));
+// used by the MCP to replace a server that runs outdated code (only when nothing is exporting)
+app.post('/api/shutdown', h(async (_req, res) => {
+  res.json({ ok: true });
+  saveAll();
+  await closeBrowser().catch(() => {});
+  setTimeout(() => process.exit(0), 100);
+}));
 app.get('/api/catalog', h(() => catalog()));
 // Roll an art direction; looks used by the most recent projects are avoided unless one is requested by key.
 app.get('/api/looks/roll', h((req) => {
@@ -205,6 +216,7 @@ app.get('/api/projects/:id/sheet', h(async (req, res) => {
   const times = req.query.times ? String(req.query.times).split(',').map(Number) : Array.from({ length: 12 }, (_, i) => +(dur * (i + 0.5) / 12).toFixed(2));
   res.type('jpeg').send(await contactSheet(req.params.id, times, Number(req.query.cols || 4)));
 }));
+app.post('/api/projects/:id/check', h((req) => checkProject(req.params.id, { times: req.body?.times, audio: req.body?.audio })));
 app.get('/api/presets', h(() => Object.entries(PRESETS).map(([k, v]) => ({ key: k, label: v.label }))));
 app.post('/api/projects/:id/export', h((req) => startExport(req.params.id, String(req.body?.preset || 'mp4'), req.body?.range)));
 app.get('/api/projects/:id/jobs', h((req) => listJobs(req.params.id)));

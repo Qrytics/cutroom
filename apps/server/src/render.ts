@@ -31,6 +31,12 @@ async function openStage(p: Project, scale = 1): Promise<Page> {
   return page;
 }
 
+/** Run something against a loaded headless stage, then close it. */
+export async function withStage<T>(p: Project, fn: (page: Page) => Promise<T>, scale = 0.25): Promise<T> {
+  const page = await openStage(p, scale);
+  try { return await fn(page); } finally { await page.close(); }
+}
+
 const seek = (page: Page, t: number) => page.evaluate(async (t) => (window as never as { __cutroom: { seek(t: number): Promise<void> } }).__cutroom.seek(t), t);
 
 /** PNG/JPEG frames at the given times (for Claude to look at its own edit). */
@@ -72,6 +78,8 @@ export interface Job {
 }
 const jobs = new Map<string, Job>();
 export const getJob = (id: string) => jobs.get(id);
+/** exports still running (the MCP will not restart a busy server) */
+export const activeJobs = () => [...jobs.values()].filter((j) => j.status !== 'done' && j.status !== 'error').length;
 export const listJobs = (projectId: string) => [...jobs.values()].filter((j) => j.projectId === projectId).sort((a, b) => b.startedAt - a.startedAt);
 
 export const PRESETS: Record<string, { ext: string; video: string[]; audio: string[]; scale?: number; label: string }> = {

@@ -2,7 +2,7 @@
 // text/transition motion, camera motion, music and sound kit — with several options per slot. rollLook() picks one
 // concrete combination (seeded) and turns it into ready-to-use clip props, so two videos never share the same skin
 // unless asked to. Values reference component/sfx option names; test/looks.test.ts checks they all exist.
-import { hash, rng } from './engine/ease.ts';
+import { hash, mixColor, rng } from './engine/ease.ts';
 
 export interface Palette { bg: string; bg2: string; surface: string; text: string; muted: string; accent: string; accent2: string; accent3: string }
 export interface FontPair { display: string; body: string; mono: string; weight: number; uppercase?: boolean; tracking?: number; italic?: boolean }
@@ -199,7 +199,7 @@ export const LOOKS: Look[] = [
     fonts: [F('Bebas Neue', 'Inter', 'IBM Plex Mono', 400, { uppercase: true, tracking: 10 }), F('Syne', 'Inter', 'IBM Plex Mono', 800, { uppercase: true, tracking: 6 })],
     shading: ['gradient', 'shadow'],
     backgrounds: [{ style: 'radial' }, { style: 'noise' }, { style: 'glow' }],
-    textures: [{ style: 'letterbox', intensity: 1 }, { style: 'filmBurn', intensity: 0.3 }, { style: 'grain', intensity: 0.45 }],
+    textures: [{ style: 'letterbox', intensity: 0.5 }, { style: 'filmBurn', intensity: 0.3 }, { style: 'grain', intensity: 0.45 }],
     titleLayouts: ['classic', 'huge'], lowerThirds: ['minimal', 'underline'], captions: ['plain', 'outline'], logoStyles: ['sweep', 'stroke'],
     textIn: ['tracking', 'blurIn', 'zoomBlur'], textOut: ['trackingOut', 'fade', 'zoomOut'], loops: ['none', 'shimmer'],
     transitions: ['fade', 'zoomBlur', 'blur'], wipes: [{ component: 'flash', props: { color: '#000000', peak: 0.5 } }, { component: 'flash', props: { color: '#ffffff', peak: 0.2 } }],
@@ -473,7 +473,9 @@ export function rollLook(o: RollOptions = {}): Direction {
   const shade = shadeText(shading, palette);
   const typo = { font: fonts.display, uppercase: !!fonts.uppercase, letterSpacing: fonts.tracking ?? 0, italic: !!fonts.italic };
   const recipes: Direction['recipes'] = {
-    background: { component: 'background', props: { color1: palette.bg, color2: palette.bg2, color3: palette.accent2, speed: 0.6 + r() * 0.8, ...bg } },
+    // the background's accent is pulled towards the stage color (pale on light stages, deeper on dark ones),
+    // so text stays readable over stripes, blobs, meshes and gradients
+    background: { component: 'background', props: { color1: palette.bg, color2: palette.bg2, color3: mixColor(palette.accent2, palette.bg, light ? 0.72 : 0.4), speed: 0.6 + r() * 0.8, ...bg } },
     title: { component: 'title', props: { ...typo, layout: layouts.title, weight: fonts.weight, color: palette.text, subColor: palette.muted, accent: palette.accent, animIn: textIn[0], animOut: motion.textOut, loop: motion.loop, ...pickKeys(shade, ['shadow', 'shadowColor']) } },
     headline: { component: 'text', props: { ...typo, weight: fonts.weight, color: palette.text, animIn: textIn[1] ?? textIn[0], animOut: motion.textOut, loop: motion.loop, ...shade } },
     body: { component: 'text', props: { font: fonts.body, weight: 500, size: 52, color: palette.muted, animIn: textIn[2] ?? 'fade', animOut: 'fade' } },
@@ -510,7 +512,7 @@ function shadeText(s: Shading, p: Palette): Record<string, unknown> {
     case 'gradient': return { gradientTo: p.accent };
     case 'duotone': return { color: p.accent, gradientTo: p.accent2 };
     case 'glow': return { shadow: 40, shadowColor: p.accent };
-    case 'neon': return { shadow: 60, shadowColor: p.accent, stroke: p.accent, strokeWidth: 2 };
+    case 'neon': return { shadow: 60, shadowColor: p.accent };
     case 'soft': return { shadow: 30, shadowColor: 'rgba(0,0,0,0.18)' };
     case 'shadow': return { shadow: 6, shadowColor: p.accent2 };
     case 'outline': return { color: 'rgba(0,0,0,0)', stroke: p.text, strokeWidth: 2 };

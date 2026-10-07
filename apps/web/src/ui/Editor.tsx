@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { projectDuration, type Op } from '@cutroom/core';
-import { closeSession, openSession, session, useEditor } from '../lib/store.ts';
+import { closeSession, openSession, saveMe, session, useEditor } from '../lib/store.ts';
 import { player } from '../lib/player.ts';
 import { uploadFiles } from '../lib/api.ts';
 import { TopBar } from './TopBar.tsx';
@@ -11,7 +11,6 @@ import { Inspector } from './Inspector.tsx';
 import { Timeline } from './Timeline.tsx';
 import { SidePanel } from './SidePanel.tsx';
 import { Toasts } from './Toasts.tsx';
-import { navigate } from '../main.tsx';
 
 export function Editor({ projectId }: { projectId: string }) {
   const project = useEditor((s) => s.project);
@@ -21,7 +20,8 @@ export function Editor({ projectId }: { projectId: string }) {
   const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
-    if (!me.name) { navigate('/'); return; }
+    // no name yet: ask in place (below) instead of redirecting, so a shared/opened project link keeps working
+    if (!me.name) return;
     openSession(projectId);
     return () => { player.pause(); closeSession(); };
   }, [projectId, me.name]);
@@ -92,7 +92,8 @@ export function Editor({ projectId }: { projectId: string }) {
     } catch (err) { st.toast(String((err as Error).message), 'error'); }
   };
 
-  if (!project) return <div className="loading">Connecting to project…</div>;
+  if (!me.name) return <JoinPrompt />;
+  if (!project) return <Connecting projectId={projectId} />;
 
   return (
     <div className={`editor ${readOnly ? 'readonly' : ''}`}
@@ -112,6 +113,47 @@ export function Editor({ projectId }: { projectId: string }) {
       <Timeline />
       <Toasts />
       {dragging && <div className="drop-overlay">Drop files to import into the media library</div>}
+    </div>
+  );
+}
+
+/** Loading state that never hangs silently: after a few seconds it says why and offers a retry. */
+function Connecting({ projectId }: { projectId: string }) {
+  const [problem, setProblem] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/projects/${encodeURIComponent(projectId)}?log=0`);
+        setProblem(r.status === 404 ? `There is no project "${projectId}".` : 'The project exists but live sync has not connected yet.');
+      } catch { setProblem('The Cutroom server is not responding — start it with `npm start` in the cutroom folder.'); }
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [projectId]);
+  return (
+    <div className="loading">
+      <div>Connecting to project…</div>
+      {problem && (
+        <div className="muted small" style={{ marginTop: 12 }}>
+          {problem} <button className="ghost small" onClick={() => location.reload()}>Retry</button> <a href="/">All projects</a>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function JoinPrompt() {
+  const me = useEditor((s) => s.me);
+  const [name, setName] = useState('');
+  const join = () => { const m = { ...me, name: name.trim() }; saveMe(m); useEditor.setState({ me: m }); };
+  return (
+    <div className="home">
+      <section className="card narrow">
+        <h2>What should collaborators call you?</h2>
+        <div className="row">
+          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && name.trim() && join()} placeholder="Your name" />
+          <button className="primary" disabled={!name.trim()} onClick={join}>Join project</button>
+        </div>
+      </section>
     </div>
   );
 }

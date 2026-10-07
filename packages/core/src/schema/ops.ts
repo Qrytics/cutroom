@@ -6,6 +6,7 @@ import { SFX } from '../audio/synth.ts';
 import { appendLog, readClip, readProject, replaceContent, uid, writeClip, writeTrack, yClips, yMarkers, yMedia, yMeta, yTracks } from './doc.ts';
 import { isAudible } from './props.ts';
 import { hash } from '../engine/ease.ts';
+import { lintClip, lintPlacement } from './lint.ts';
 import type { Author, Clip, ClipType, Ease, Keyframe, Marker, Media, Meta, Project, Props, Track, TrackKind } from './types.ts';
 
 export type Op =
@@ -31,7 +32,7 @@ export type Op =
   | { op: 'clear' }
   | { op: 'replaceProject'; project: Pick<Project, 'meta' | 'tracks' | 'clips' | 'markers'> };
 
-export interface OpResult { op: string; id?: string; summary: string }
+export interface OpResult { op: string; id?: string; summary: string; warnings?: string[] }
 
 export const fmtT = (t: number) => {
   const m = Math.floor(t / 60), s = t - m * 60;
@@ -269,6 +270,8 @@ export function applyOps(d: Y.Doc, ops: Op[], author: Author, opts: ApplyOptions
   d.transact(() => {
     for (const o of ops) {
       const r = applyOne(d, p, o);
+      const w = lintOp(p, o, r);
+      if (w.length) r.warnings = w;
       results.push(r);
       if (opts.log !== false) {
         const c = r.id ? p.clips[r.id] : undefined;
@@ -277,6 +280,19 @@ export function applyOps(d: Y.Doc, ops: Op[], author: Author, opts: ApplyOptions
     }
   }, opts.origin ?? author);
   return results;
+}
+
+function lintOp(p: Project, o: Op, r: OpResult): string[] {
+  const c = r.id ? p.clips[r.id] : undefined;
+  if (!c) return [];
+  switch (o.op) {
+    case 'addClip': return [...lintClip(c), ...lintPlacement(p, c)];
+    case 'duplicateClip': case 'updateClip': return lintPlacement(p, c);
+    case 'setProps': return lintClip(c, o.props, {});
+    case 'setKeyframes': return lintClip(c, {}, { [o.prop]: o.keyframes });
+    case 'addKeyframe': return lintClip(c, {}, { [o.prop]: [{ t: o.t, v: o.v, ease: o.ease }] });
+    default: return [];
+  }
 }
 
 /** Convenience used by the UI: one clip read straight from the doc. */

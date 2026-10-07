@@ -88,3 +88,23 @@ describe('engine', () => {
     expect(catalog().components.length).toBeGreaterThan(10);
   });
 });
+
+describe('lint', () => {
+  it('warns on typos, bad options, ranges, keyframe times and overlaps — but still applies', () => {
+    const d = fresh();
+    const r = applyOps(d, [
+      { op: 'addClip', id: 't', type: 'component', component: 'title', start: 0, duration: 3, trackId: 'v1', props: { txt: 'hi', layout: 'stackd', size: 9999, color: 'blu' } },
+      { op: 'addClip', id: 'u', type: 'component', component: 'text', start: 2, duration: 3, trackId: 'v1', keyframes: { x: [{ t: 7, v: 1 }] } },
+      { op: 'setProps', id: 't', props: { animIn: 'maskUp' } },
+    ], CLAUDE);
+    const w = r.flatMap((x) => x.warnings ?? []).join('\n');
+    expect(w).toMatch(/unknown prop "txt" — did you mean "text"/);
+    expect(w).toMatch(/"layout"="stackd" is not an option — did you mean "stacked"/);
+    expect(w).toMatch(/size"=9999 is above/);
+    expect(w).toMatch(/"color"="blu" is not a color/);
+    expect(w).toMatch(/keyframe at t=7 is outside the clip/);
+    expect(w).toMatch(/overlaps "t"/);
+    expect(r[2].warnings).toBeUndefined();
+    expect(readProject(d).clips.t.props.txt).toBe('hi');
+  });
+});
